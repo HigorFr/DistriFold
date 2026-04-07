@@ -75,9 +75,9 @@
 
 ### **Por que não UDP?**
 - UDP seria inadequado porque:
-  - ❌ Perda de mensagens comprometeria os resultados dos folds
-  - ❌ Sem garantia de ordem, resultados poderiam ser processados incorretamente
-  - ❌ Sem controle de congestionamento em redes saturadas
+  - Perda de mensagens comprometeria os resultados dos folds
+  - Sem garantia de ordem, resultados poderiam ser processados incorretamente
+  - Sem controle de congestionamento em redes saturadas
 
 ### **Essencial para:**
 - Garantir que os resultados dos folds não sejam perdidos
@@ -218,10 +218,10 @@ sequenceDiagram
 
 O estado global do modelo só é consolidado após a unificação dos resultados parciais, permitindo que:
 
-- ✅ Falhas individuais de nós sejam resolvidas por re-execução
-- ✅ A ordem de chegada dos resultados não importe (problema monotônico)
-- ✅ A integridade estatística do K-Fold Cross-Validation seja preservada
-- ✅ O sistema continue operando mesmo com falhas parciais
+- Falhas individuais de nós sejam resolvidas por re-execução
+- A ordem de chegada dos resultados não importe (problema monotônico)
+- A integridade estatística do K-Fold Cross-Validation seja preservada
+- O sistema continue operando mesmo com falhas parciais
 
 ### **Garantias:**
 
