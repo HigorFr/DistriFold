@@ -1,0 +1,302 @@
+import numpy as np
+from sklearn.model_selection import KFold
+import os
+import datetime
+
+
+#funções auxiliares para inicializar pesos
+def inicializar_weights_he(inp, out): #He initialization
+    return np.random.randn(out, inp) * np.sqrt(2.0 / inp)
+
+def inicializar_weights_xavier(inp, out): #Xavier/Glorot initialization
+    return np.random.randn(out, inp) * np.sqrt(2.0 / (inp + out))
+
+
+#configurações gerais
+usar_pouco = False #Só para mudar se eu quero testar com menos dados
+timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+descritores = ["HOG","LBP"]  #descritores a processar
+modelos = ["linear", "MLP"]    #tipos de modelo  
+random_state = 42               #seed para reproducibilidade
+
+for descritor in descritores:
+
+    #carregar dados
+    if(usar_pouco == True):
+        data = np.load(f"Código/mini_descritores_{descritor}.npz")
+    else:
+        data = np.load(f"Código/descritores_{descritor}.npz")
+    
+    vetores = data["vetores"]
+    rotulos = data["rotulos"]
+    ids_unicos = data["ids_unicos"]
+    tipo = data["tipo"]
+
+    print("Arquivo carregado:", tipo)
+    print(f"Número de classes (IDs): {len(ids_unicos)}")
+    print(f"Número de amostras: {len(vetores)}")
+
+    rotulos_encoded = rotulos.astype(int)   #só pra garantir (não conferi se já estava como inteiro)
+    num_classes = int(np.max(rotulos_encoded)) + 1
+
+
+    print(f"Classes codificadas: {num_classes}")
+
+    #configura K-Fold
+    kf = KFold(n_splits=5, shuffle=True, random_state=random_state)
+
+    for modelo in modelos:
+
+        print(f"\n{'='*60}")
+        print(f"MODELO: {modelo.upper()}")
+        print(f"{'='*60}")
+
+        #cria pasta para salvar resultados
+        pasta_base = f"Resultados_Identificacao/{descritor}/{modelo}"
+        os.makedirs(pasta_base, exist_ok=True)
+
+        arquivo_config = os.path.join(pasta_base, "run_config.txt")
+        arquivo_dat = os.path.join(pasta_base, "model.dat")
+        arquivo_error = os.path.join(pasta_base, "run_error.txt")
+
+        #inicia arquivos de log
+        with open(arquivo_config, "w", encoding="utf-8") as f:
+            f.write(f"Execução: {timestamp}\nDescritor: {descritor}\nModelo: {modelo}\n")
+
+        with open(arquivo_error, "w", encoding="utf-8") as f:
+            f.write(f"Execucao em {timestamp}\n")
+
+        #listas para métricas
+        acuracias = []
+        precisoes = []
+        recalls = []
+        f1_scores = []
+
+        melhor_fold = (-1, -np.inf)  #melhor fold
+        pior_fold = (-1, np.inf)     #pior fold
+
+        #loop K-Fold
+        for fold_id, (treino_idx, teste_idx) in enumerate(kf.split(vetores)):
+            print(f"\n--- Fold {fold_id} ---")
+
+            #separa treino e teste
+            X_treino = vetores[treino_idx]
+            y_treino = rotulos_encoded[treino_idx]
+            X_teste = vetores[teste_idx]
+            y_teste = rotulos_encoded[teste_idx]
+
+            #análise de balanceamento
+            unique_train, counts_train = np.unique(y_treino, return_counts=True)
+            unique_test, counts_test = np.unique(y_teste, return_counts=True)
+
+            print(f"Amostras treino: {len(X_treino)} (mín: {counts_train.min()}, máx: {counts_train.max()})")
+            print(f"Amostras teste: {len(X_teste)} (mín: {counts_test.min()}, máx: {counts_test.max()})")
+
+            #normalização Z-score
+            media = X_treino.mean(axis=0)
+            desvio = X_treino.std(axis=0) + 1e-8
+            X_treino = (X_treino - media) / desvio
+            X_teste = (X_teste - media) / desvio
+
+            n_atrib = X_treino.shape[1]  #número de atributos
+
+            historico_epocas = []  #para salvar losses por época
+
+
+            h1, h2 = 64, 16
+            W1, b1 = inicializar_weights_he(n_atrib, h1), np.zeros(h1)
+            W2, b2 = inicializar_weights_he(h1, h2), np.zeros(h2)
+            W3, b3 = inicializar_weights_xavier(h2, num_classes), np.zeros(num_classes)
+
+            #hiperparâmetros
+            lr = 0.005
+            l2 = 1e-4
+            epocas = 200
+            batch = 128
+            dropout_rate = 0.2
+            melhor_val_loss = np.inf
+            melhor_val_acc = 0
+            paciencia = 20
+            piora = 0
+
+            for ep in range(epocas):
+                #shuffle
+                perm = np.random.permutation(len(X_treino))
+                Xs, ys = X_treino[perm], y_treino[perm]
+
+                losses_batch = []
+
+                for i in range(0, len(Xs), batch):
+                    Xb, yb = Xs[i:i+batch], ys[i:i+batch]
+
+                    #forward com dropout
+                    z1 = Xb @ W1.T + b1
+                    a1 = np.maximum(0, z1)
+                    if dropout_rate > 0:
+                        mask1 = np.random.binomial(1, 1-dropout_rate, size=a1.shape) / (1-dropout_rate)
+                        a1 *= mask1
+
+                    z2 = a1 @ W2.T + b2
+                    a2 = np.maximum(0, z2)
+                    if dropout_rate > 0:
+                        mask2 = np.random.binomial(1, 1-dropout_rate, size=a2.shape) / (1-dropout_rate)
+                        a2 *= mask2
+
+                    logits = a2 @ W3.T + b3
+                    exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
+                    probs = exp / (exp.sum(axis=1, keepdims=True) + 1e-8)
+
+                    #loss com L2
+                    loss = -np.mean(np.log(probs[np.arange(len(yb)), yb] + 1e-8))
+                    total_loss = loss + 0.5 * l2 * (np.sum(W1*W1) + np.sum(W2*W2) + np.sum(W3*W3))
+                    losses_batch.append(total_loss)
+
+                    #backward
+                    g3 = probs.copy()
+                    g3[np.arange(len(yb)), yb] -= 1
+                    g3 /= len(yb)
+                    g2 = (g3 @ W3) * (z2 > 0)
+                    if dropout_rate > 0:
+                        g2 *= mask2
+                    g1 = (g2 @ W2) * (z1 > 0)
+                    if dropout_rate > 0:
+                        g1 *= mask1
+
+                    #atualiza pesos
+                    W3 -= lr * (g3.T @ a2 + l2 * W3)
+                    b3 -= lr * g3.sum(axis=0)
+                    W2 -= lr * (g2.T @ a1 + l2 * W2)
+                    b2 -= lr * g2.sum(axis=0)
+                    W1 -= lr * (g1.T @ Xb + l2 * W1)
+                    b1 -= lr * g1.sum(axis=0)
+
+                erro_treino = np.mean(losses_batch)
+
+                #validação sem dropout
+                z1_val = X_teste @ W1.T + b1
+                a1_val = np.maximum(0, z1_val)
+                z2_val = a1_val @ W2.T + b2
+                a2_val = np.maximum(0, z2_val)
+                logits_val = a2_val @ W3.T + b3
+
+                exp_val = np.exp(logits_val - np.max(logits_val, axis=1, keepdims=True))
+                probs_val = exp_val / (exp_val.sum(axis=1, keepdims=True) + 1e-8)
+
+                val_loss = -np.mean(np.log(probs_val[np.arange(len(y_teste)), y_teste] + 1e-8))
+                pred_val = probs_val.argmax(axis=1)
+                val_acc = (pred_val == y_teste).mean()
+
+                #early stopping baseado em acurácia
+                if val_acc > melhor_val_acc:
+                    melhor_val_acc = val_acc
+                    melhor_val_loss = val_loss
+                    piora = 0
+                    W1_best, b1_best = W1.copy(), b1.copy()
+                    W2_best, b2_best = W2.copy(), b2.copy()
+                    W3_best, b3_best = W3.copy(), b3.copy()
+                else:
+                    piora += 1
+
+                #log do batch
+                with open(arquivo_error, "a", encoding="utf-8") as f:
+                    f.write(f"{ep};{erro_treino:.8f};{val_loss:.8f}\n")
+
+                historico_epocas.append((ep, erro_treino, val_loss))
+
+                if piora >= paciencia:
+                    W1, b1 = W1_best, b1_best
+                    W2, b2 = W2_best, b2_best
+                    W3, b3 = W3_best, b3_best
+                    break
+
+            #avaliação final
+            z1_final = X_teste @ W1.T + b1
+            a1_final = np.maximum(0, z1_final)
+            z2_final = a1_final @ W2.T + b2
+            a2_final = np.maximum(0, z2_final)
+            logits_final = a2_final @ W3.T + b3
+
+            exp_final = np.exp(logits_final - np.max(logits_final, axis=1, keepdims=True))
+            probs_final = exp_final / (exp_final.sum(axis=1, keepdims=True) + 1e-8)
+
+
+            #avaliação do fold
+            pred = probs_final.argmax(axis=1)
+            acur = (pred == y_teste).mean()
+            acuracias.append(acur)
+
+            from sklearn.metrics import precision_score, recall_score, f1_score
+            precisao = precision_score(y_teste, pred, average='weighted', zero_division=0)
+            recall = recall_score(y_teste, pred, average='weighted', zero_division=0)
+            f1 = f1_score(y_teste, pred, average='weighted', zero_division=0)
+
+            precisoes.append(precisao)
+            recalls.append(recall)
+            f1_scores.append(f1)
+
+            print(f"Acurácia: {acur:.4f}")
+            print(f"Precisão: {precisao:.4f}")
+            print(f"Recall: {recall:.4f}")
+            print(f"F1-Score: {f1:.4f}")
+
+            #melhor e pior fold
+            if acur > melhor_fold[1]:
+                melhor_fold = (fold_id, acur)
+            if acur < pior_fold[1]:
+                pior_fold = (fold_id, acur)
+
+
+        #resultados finais do modelo
+        print(f"\nAcurácia média: {np.mean(acuracias):.4f} ± {np.std(acuracias):.4f}")
+        print(f"Melhor fold: {melhor_fold}")
+        print(f"Pior fold: {pior_fold}")
+
+
+  
+        with open(arquivo_dat, "w", encoding="utf-8") as f:
+            if modelo == "linear":
+            
+                f.write("MODEL: LINEAR\n")
+                f.write(f"INPUT_DIM: {n_atrib}\n")
+                f.write(f"NUM_CLASSES: {num_classes}\n")
+                f.write(f"LR: {lr}\n")
+                f.write(f"L2: {l2}\n\n")
+
+                f.write("WEIGHTS\n")
+                for row in W:
+                    f.write(" ".join(f"{v:.8f}" for v in row) + "\n")
+
+                f.write("\nBIAS\n")
+                f.write(" ".join(f"{v:.8f}" for v in b))
+
+            else:
+                f.write("MODEL: MLP\n")
+                f.write(f"INPUT_DIM: {n_atrib}\n")
+                f.write(f"HIDDEN_LAYER_1: {h1}\n")
+                f.write(f"HIDDEN_LAYER_2: {h2}\n")
+                f.write(f"NUM_CLASSES: {num_classes}\n")
+                f.write(f"LR: {lr}\n")
+                f.write(f"L2: {l2}\n")
+                f.write(f"DROPOUT_RATE: {dropout_rate}\n\n")
+
+                f.write("WEIGHTS_LAYER_1\n")
+                for row in W1:
+                    f.write(" ".join(f"{v:.8f}" for v in row) + "\n")
+
+                f.write("\nBIAS_LAYER_1\n")
+                f.write(" ".join(f"{v:.8f}" for v in b1) + "\n")
+
+                f.write("\nWEIGHTS_LAYER_2\n")
+                for row in W2:
+                    f.write(" ".join(f"{v:.8f}" for v in row) + "\n")
+
+                f.write("\nBIAS_LAYER_2\n")
+                f.write(" ".join(f"{v:.8f}" for v in b2) + "\n")
+
+                f.write("\nWEIGHTS_OUTPUT_LAYER\n")
+                for row in W3:
+                    f.write(" ".join(f"{v:.8f}" for v in row) + "\n")
+
+                f.write("\nBIAS_OUTPUT_LAYER\n")
+                f.write(" ".join(f"{v:.8f}" for v in b3))
+
