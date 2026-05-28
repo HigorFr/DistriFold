@@ -7,12 +7,18 @@ from communication.torrent import TorrentEngine
 from communication.communication_tags import *
 from MLP import train_fold_from_arrays
 class WorkerWork:
-    def __init__(self, context: NodeContext, connector: MPIConnector):
+    def __init__(self, context: NodeContext, connector: MPIConnector, comm_service=None):
         self.context = context
         self.connector = connector
+        self.comm_service = comm_service
         self.torrent = TorrentEngine(context, connector)
     def run(self):
 
+
+        # caso caia e volte (ou no início), inicia a eleição realista primeiro
+        print(f"[Worker {self.context.rank}] Iniciando e disparando eleição para descobrir líder...")
+        if self.comm_service:
+            self.comm_service.start_election()
 
         #Aguarda a eleição do líder inicial antes de iniciar qualquer trabalho
         while self.context.leader_rank is None:
@@ -24,20 +30,35 @@ class WorkerWork:
             print(f"[Nó {self.context.rank}] Sou o Líder, ignorando papel de Worker.")
             return
 
-        print(f"[Worker {self.context.rank}] Iniciando download P2P do Dataset...")
+        print(f"[Worker {self.context.rank}] Iniciando verificação do Dataset...")
         
-        #Faz o download de todas as fatias do dataset pelo p2p
+        #Faz o download ou carrega localmente as fatias do dataset
         X, y = self.torrent.download_as_worker()
+        self.context.ready_to_work = True
+    
 
         #Inicializa o KFold TODO CONFERIR SE ESTÁ IDENTICO AO LIDER
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
-        splits = list(kf.split(X))
+
         print(f"[Worker {self.context.rank}] Pronto e aguardando ordens de Folds do Líder.")
         
+
         
         while not self.context.stop_event.is_set():
             #Escuta ordens do lider
-            fold_id = self.connector.check_message(source=self.context.leader_rank, tag=TAG_TASK)
+            msg = self.connector.check_message(source=self.context.leader_rank, tag=TAG_TASK)
+            
+            if msg is None:
+                continue
+
+
+            fold_id = msg['fold_id']
+            config = msg['config']
+
+            fold_config = config['FOLD']
+            kf = KFold(**fold_config)
+            splits = list(kf.split(X))
+
+
             if fold_id is not None:
                 if fold_id == -1:
                     print(f"[Worker {self.context.rank}] Sinal de encerramento recebido do Líder. Desconectando...")
@@ -50,14 +71,11 @@ class WorkerWork:
 
                 # Pega os índices do fold de forma determinística localmente
                 train_idx, test_idx = splits[fold_id]
-                config = {
-                    "h1": 64, "h2": 16, "lr": 0.005,
-                    "epochs": 100, "batch_size": 32
-                }
+                config_MLP = config['MLP']
                 
                 
                 #Treina localmente usando a classe do MPL
-                res = train_fold_from_arrays(X, y, train_idx, test_idx, config, fold_id=fold_id)
+                res = train_fold_from_arrays(X, y, train_idx, test_idx, config_MLP, fold_id=fold_id)
                 
                 #Envia só as métricas finais e pesos de volta
                 self.connector.send(res, dest=self.context.leader_rank, tag=TAG_RESULT)

@@ -8,7 +8,7 @@ TAG_ACK = 2
 TAG_TASK = 3
 TAG_RESULT = 4
 TAG_STATE_SYNC = 5
-
+TAG_TASK_CONFIG = 6
 
 
 
@@ -22,3 +22,9 @@ TAG_TORRENT_PIECE = 14  #Envio do pedaço físico solicitado
 
 #Nó pronto
 TAG_NODE_READY = 20
+
+#Eleição e requisição de metadados
+TAG_ELECTION_START = 21   #Pedido de eleição (ELECTION)
+TAG_ELECTION_VOTE = 22    #Resposta indicando que está vivo (ANSWER)
+TAG_TORRENT_META_REQ = 23  #Solicitação de metadados do torrent
+TAG_LEADER_ANNOUNCE = 24   #Anúncio do novo líder (COORDINATOR)

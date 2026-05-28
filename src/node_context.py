@@ -12,9 +12,11 @@ class NodeContext:
         self.last_heartbeat = time.time()
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
-        
+        self.ready_to_work = False
+
         #Informação compartilhada pra se o líder cair
         self.context_dirty = False
+
         self.leader_context = {
             "epoch": 0,
             "pending_folds": [],
@@ -29,21 +31,21 @@ class NodeContext:
     
     #Adiciona o nó na lista de mortos
     def setDead(self, rank):
-        if rank not in self.leader_context["dead_nodes"]:
+        if rank in self.leader_context["alive_nodes"]:
             self.leader_context["alive_nodes"].remove(rank)
-            lost_fold = self.leader_context["active_assignments"].pop(rank, None)
-            self.leader_context["pending_folds"].append(lost_fold) if lost_fold is not None else None
-            self.context_dirty = True
+        if rank in self.leader_context["ready_nodes"]:
+            self.leader_context["ready_nodes"].remove(rank)
+
+        lost_fold = self.leader_context["active_assignments"].pop(rank, None)
+        if lost_fold is not None:
+            self.leader_context["pending_folds"].append(lost_fold)
+        self.context_dirty = True
 
     #Remove o nó da lista de mortos
     def setAlive(self, rank):
         if rank not in self.leader_context["alive_nodes"]:
             self.leader_context["alive_nodes"].append(rank)
             self.context_dirty = True
-
-    #Checa se o nó está vivo
-    def isAlive(self, rank):
-        return rank in self.leader_context["alive_nodes"]
 
 
     def setReady(self, rank):

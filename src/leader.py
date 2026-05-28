@@ -6,25 +6,40 @@ from node_context import NodeContext
 from communication.network import MPIConnector
 from communication.torrent import TorrentEngine
 from communication.communication_tags import *
+import os
+
+
 class LeaderWork:
-    def __init__(self, context: NodeContext, connector: MPIConnector):
+    def __init__(self, context: NodeContext, connector: MPIConnector, dataset_id, MLP_Config, FOLD_Config):
         self.context = context
         self.connector = connector
+        self.dataset_id = dataset_id
+        self.MLP_Config = MLP_Config
+        self.FOLD_Config = FOLD_Config
+
         self.torrent = TorrentEngine(context, connector)
         self.num_folds = 5
         self.results = {}
 
     def _carregar_dataset(self):
         
-        #Carrega o dataset Breast Cancer da sklearn para testar inicialmente
-        from sklearn.datasets import load_breast_cancer
-        data = load_breast_cancer()
-        X = data.data
-        y = data.target
-        print(f"[Líder] Dataset Breast Cancer carregado com sucesso. Formato: {X.shape}")
-        return X, y
-    
-    
+        #Carrega o dataset Breast Cancer da sklearn para testar inicialmente        
+        src_dir = os.path.dirname(os.path.abspath(__file__))
+        local_dir = os.path.join(src_dir, "Locals", f"Rank {self.context.rank}")
+        file_path = os.path.join(local_dir, f"{self.dataset_id}.npz")
+
+        if os.path.exists(file_path):
+            print(f"[Worker {self.context.rank}] Dataset '{self.dataset_id}' encontrado localmente! Carregando de {file_path}")
+            data = np.load(file_path, allow_pickle=True)
+            X = data["X"]
+            y = data["y"]
+            return X, y
+
+        print(file_path)
+        raise FileNotFoundError(f"Dataset não encontrado: {file_path}")
+
+
+
     
     #Comm só chama isso se ele for lider
     def run(self):
@@ -40,7 +55,7 @@ class LeaderWork:
         if is_initial_leader:
             print(f"[Líder Rank {self.context.rank}] Iniciando Fase de Torrenting P2P...")
             X, y = self._carregar_dataset()
-            self.torrent.distribute_as_leader(X, y)
+            self.torrent.distribute_as_leader(X, y, self.dataset_id)
             print("[Líder] Distribuição de dados via P2P concluída.")
             
             #Inicializa a fila de folds no contexto
@@ -49,6 +64,7 @@ class LeaderWork:
                 ctx["pending_folds"] = list(range(self.num_folds))
                 ctx["epoch"] = 1
                 self.context.context_dirty = True
+
 
         #Lider que não é primeiro
         else:
@@ -84,7 +100,7 @@ class LeaderWork:
                 active_assignments = ctx["active_assignments"]
                 completed_folds = ctx["completed_folds"]
                 
-                for worker_rank in ctx["alive_nodes"]:
+                for worker_rank in ctx["ready_nodes"]:
                     if worker_rank == self.context.leader_rank:
                         #TODO Aqui colocar para o lider trabalhar localmente também
                         continue
@@ -95,8 +111,19 @@ class LeaderWork:
                         ctx["epoch"] += 1
                         self.context.context_dirty = True
                         
+
+                        config = {'MLP': self.MLP_Config,
+                                'FOLD': self.FOLD_Config
+                        }
+
+                        task = {
+                            "fold_id": fold_id,
+                            "config": config
+                        }
+
                         # Envia a tarefa (apenas o fold_id)
-                        self.connector.send(fold_id, dest=worker_rank, tag=TAG_TASK)
+                        self.connector.send(task, dest=worker_rank, tag=TAG_TASK) #leader sempre envia config e o id do fold pra ele.
+                        
                         print(f"[Líder {self.context.rank}] Atribuiu Fold {fold_id} para o Worker {worker_rank}")
 
 
@@ -149,7 +176,15 @@ class LeaderWork:
         print("[Líder] Enviando sinal de encerramento para os workers...")
         for worker_rank in range(self.context.size):
             if worker_rank != self.context.leader_rank:
-                self.connector.send(-1, dest=worker_rank, tag=TAG_TASK)
+
+
+                task = {
+                    "fold_id": -1,
+                    "config": config
+                }
+
+
+                self.connector.send(task, dest=worker_rank, tag=TAG_TASK)
 
         #mata o lider
         self.context.stop_event.set()
