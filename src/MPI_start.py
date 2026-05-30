@@ -19,22 +19,29 @@ provided = MPI.Init_thread(MPI.THREAD_MULTIPLE)
 DATASET_ID = "breast_cancer"
 
 CONFIG_FOLD = {
-    "n_splits":5, 
+    "n_splits":2, 
     "shuffle":True, 
     'random_state':42
             }
 
 
 CONFIG_MLP = {
-        "h1": 64, "h2": 16, "lr": 0.005,
-        "epochs": 100, "batch_size": 32
+        "h1": 64, "h2": 16, "lr": 0.001,
+        "epochs": 200, "batch_size": 32
                 }
+
+
+TESTE_REDUNDANCIA = {
+    0: {'time_working':0 ,'time_timeout':0},
+    1: {'time_working':0 ,'time_timeout':0}
+}
+
+TESTE_REDUNDANCIA = {}
 
 
 class MainNode:
     def __init__(self, comm):
-        self.context = NodeContext(rank=comm.Get_rank(), size=comm.Get_size())
-        
+        self.context = NodeContext(rank=comm.Get_rank(), size=comm.Get_size(), teste=TESTE_REDUNDANCIA.get(comm.Get_rank()))
         # Duplica o comunicador para separar o tráfego de controle (threads de heartbeat)
         # do tráfego de dados (seeding/torrent/treino) para evitar colisões
         self.comm_control = comm.Dup()
@@ -48,7 +55,9 @@ class MainNode:
             connector=self.connector_control,
             on_leader_elected_callback=self.on_leader_elected
         )
-        self.leader_work = LeaderWork(self.context, self.connector_data, DATASET_ID, CONFIG_MLP, CONFIG_FOLD)
+
+
+        self.leader_work = LeaderWork(self.context, self.connector_data, DATASET_ID, CONFIG_MLP, CONFIG_FOLD,   comm_service=self.comm_service)
         self.worker_work = WorkerWork(self.context, self.connector_data, comm_service=self.comm_service)
 
         #Controle de Threads
@@ -62,8 +71,11 @@ class MainNode:
 
 
     def on_leader_elected(self, leader_rank):
-        # Callback disparado quando a eleição termina
-        self.start_leader_if_self()
+        # Callback disparado quando a eleição termina, só separei para caso for add mais coisa
+        if leader_rank == self.context.rank:
+            self.start_leader_if_self()
+
+
 
     def start_leader_if_self(self):
         if self.context.rank != self.context.leader_rank:
@@ -71,6 +83,7 @@ class MainNode:
         if self.leader_thread and self.leader_thread.is_alive():
             return
         
+        print('virei lider, vo rodar')
         self.leader_thread = threading.Thread(target=self.leader_work.run, daemon=True)
         self.leader_thread.start()
 
@@ -87,7 +100,7 @@ class MainNode:
     def run(self):
         # if self.comm_control.Get_rank() == 0:
         #     self.clear_locals()
-        
+
         self.start_threads()
         #Loop principal do Orquestrador
         while not self.context.stop_event.is_set():

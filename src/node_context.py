@@ -5,7 +5,7 @@ import time
 
 #Facilitar gereciamento global dos Nós
 class NodeContext:
-    def __init__(self, rank, size):
+    def __init__(self, rank, size, teste=None):
         self.rank = rank
         self.size = size
         self.leader_rank = None
@@ -13,6 +13,12 @@ class NodeContext:
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
         self.ready_to_work = False
+        self.teste = teste
+        self.start_time = time.time()
+        self.last_internet_tick = time.time()
+        self.recovering = False
+        self.needs_full_sync = False
+        
 
         #Informação compartilhada pra se o líder cair
         self.context_dirty = False
@@ -21,6 +27,7 @@ class NodeContext:
             "epoch": 0,
             "pending_folds": [],
             "last_heartbeat":[],
+            "last_ack": {},
             "alive_nodes": list(range(size)), #Considera que inicia com todo mundo vivo
             "ready_nodes": [],
             "active_assignments": {},  #Mapear quem está fazendo o que {worker_rank: fold_id}
@@ -52,3 +59,20 @@ class NodeContext:
         if rank not in self.leader_context["ready_nodes"]:
             self.leader_context["ready_nodes"].append(rank)
             self.context_dirty = True
+
+
+    #Simula janela de quedas do nó
+    def _node_esta_ativo(self):
+        if not self.teste:
+            return True
+
+        working = self.teste.get("time_working", 0)
+        timeout = self.teste.get("time_timeout", 0)
+        cycle = working + timeout
+
+        if cycle <= 0:
+            return True
+
+        elapsed = time.time() - self.start_time
+        return (elapsed % cycle) < working
+    

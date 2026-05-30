@@ -25,6 +25,11 @@ TAG_NODE_READY = 20
 
 #Eleição e requisição de metadados
 TAG_ELECTION_START = 21   #Pedido de eleição (ELECTION)
-TAG_ELECTION_VOTE = 22    #Resposta indicando que está vivo (ANSWER)
+TAG_ELECTION_RANK = 22    #Resposta indicando que está vivo (ANSWER)
 TAG_TORRENT_META_REQ = 23  #Solicitação de metadados do torrent
 TAG_LEADER_ANNOUNCE = 24   #Anúncio do novo líder (COORDINATOR)
+TAG_ELECTION_CONTEXT = 25  #Envio do contexto durante eleição
+TAG_LEADER_QUERY = 26      #Pergunta quem é o líder
+TAG_LEADER_REPLY = 27      #Resposta do líder atual
+TAG_CONTEXT_REQ = 28       #Pedido de contexto ao líder
+TAG_CONTEXT_RESP = 29      #Resposta de contexto do líder

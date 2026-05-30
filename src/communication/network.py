@@ -1,3 +1,5 @@
+from mpi4py import MPI
+
 class MPIConnector:
     def __init__(self, comm):
         self.comm = comm
@@ -17,4 +19,28 @@ class MPIConnector:
             return None
         if self.comm.iprobe(source=source, tag=tag):
             return self.comm.recv(source=source, tag=tag)
+        return None
+    
+
+
+
+    def check_message_all(self, source, tag):
+        if source is None:
+            source = MPI.ANY_SOURCE
+        if tag is None:
+            tag = MPI.ANY_TAG
+
+        status = MPI.Status()
+        if self.comm.iprobe(source=source, tag=tag, status=status):
+            data = self.comm.recv(
+                source=status.Get_source(),
+                tag=status.Get_tag(),
+                status=status
+            )
+            return {
+                "source": status.Get_source(),
+                "tag": status.Get_tag(),
+                "data": data
+            }
+
         return None

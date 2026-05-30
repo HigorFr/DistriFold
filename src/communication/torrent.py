@@ -19,36 +19,46 @@ class TorrentEngine:
 
 
     #Só lider faz a divisão dos primeiros pedaços
-    def distribute_as_leader(self, X, y, dataset_id):
-        with self.context.lock:
-            size = len(self.context.leader_context["alive_nodes"]) #Numero da divisão inicial é os nós vivos inicial
-        self.have = [True] * size  # O líder já tem todos os pedaços
-        self.peer_haves = {i: [False] * size for i in range(size)}
+    def distribute_as_leader(self, X, y, dataset_id, folds):
+        while not self.context._node_esta_ativo():
+            time.sleep(0.1)
+
+        size = self.context.size
+        self.have = [True] * folds  # O líder já tem todos os pedaços
+        self.peer_haves = {i: [False] * folds for i in range(size)}
         self.peer_haves[self.context.rank] = self.have
-        
+        self.total_chunkds = folds
+        self.dataset_id = dataset_id
+
         #Divide as linhas do dataset igualmente entre os nós (incluindo o líder)
-        X_splits = np.array_split(X, size, axis=0)
-        y_splits = np.array_split(y, size, axis=0)
+        X_splits = np.array_split(X, folds, axis=0)
+        y_splits = np.array_split(y, folds, axis=0)
         
         
         #Guarda os pedaços locais do líder
-        for i in range(size):
+        for i in range(self.total_chunkds):
             self.chunks[i] = (X_splits[i], y_splits[i])
-        print(f"[Torrent Líder] Dataset particionado em {size} chunks.")
+        print(f"[Torrent Líder] Dataset particionado em {self.total_chunkds} chunks.")
         
         #Envia Metadados para todos
         with self.context.lock:
-            meta = {"total_chunks": size, "dataset_id": dataset_id} #A divisão inicial sempre vai ser igual ao numero de nós
+            meta = {"total_chunks": self.total_chunkds, "dataset_id": dataset_id}
 
         with self.context.lock:
             alive_nodes = self.context.leader_context["alive_nodes"]
 
         for dest in alive_nodes:
             if dest != self.context.rank:
+                if not self.context._node_esta_ativo():
+                    time.sleep(0.1)
+                    continue
                 self.connector.send(meta, dest=dest, tag=TAG_TORRENT_META)
         
         for dest in alive_nodes:
             if dest != self.context.rank:
+                if not self.context._node_esta_ativo():
+                    time.sleep(0.1)
+                    continue
                 chunk_payload = (X_splits[dest], y_splits[dest])
                 self.connector.send(chunk_payload, dest=dest, tag=TAG_TORRENT_SEED)
                 print(f"[Torrent Líder] Enviado Chunk Inicial {dest} para Worker {dest}")
@@ -62,25 +72,40 @@ class TorrentEngine:
     #Baixar os primeiros dataset do lider
     def download_as_worker(self):
         size = self.context.size
-        self.have = [False] * size
-        self.peer_haves = {i: [False] * size for i in range(size)} #inicializa tudo como falso
-        self.peer_haves[self.context.leader_rank] = [True] * size  #exceto o lider que é tudo true
+
         
         # pede os metadados do lider para ver o ID
         print(f"[Worker {self.context.rank}] Pedindo metadados ao líder...")
-        self.connector.send(self.context.rank, dest=self.context.leader_rank, tag=TAG_TORRENT_META_REQ)
+        if not self.context._node_esta_ativo():
+            time.sleep(0.1)
+        else:
+            print('mandei pro leader')
+            self.connector.send(self.context.rank, dest=self.context.leader_rank, tag=TAG_TORRENT_META_REQ)
 
         #Pega metadado do lider
         meta = None
         while meta is None:
+            if not self.context._node_esta_ativo():
+                time.sleep(0.1)
+                continue
+            print('Esperei')
             meta = self.connector.check_message(source=self.context.leader_rank, tag=TAG_TORRENT_META)
             if meta is None:
                 time.sleep(0.1)
                 # reenvia pedido se demorar pra responder
+                print('mandei pro leader dnv')
                 self.connector.send(self.context.rank, dest=self.context.leader_rank, tag=TAG_TORRENT_META_REQ)
             else:
+                print('recebi meta')
                 break
-        total_chunks = meta["total_chunks"]
+
+        self.total_chunks = meta["total_chunks"]
+        self.have = [False] * self.total_chunks
+        self.peer_haves = {i: [False] * self.total_chunks for i in range(size)} #inicializa tudo como falso
+        self.peer_haves[self.context.leader_rank] = [True] * self.total_chunks  #exceto o lider que é tudo true
+
+
+        
         dataset_id = meta.get("dataset_id", "breast_cancer")
 
         
@@ -97,12 +122,12 @@ class TorrentEngine:
             y_complete = data["y"]
 
             #reconstrói chunks locais para poder agir como seed do torrent
-            X_splits = np.array_split(X_complete, total_chunks, axis=0)
-            y_splits = np.array_split(y_complete, total_chunks, axis=0)
-            for i in range(total_chunks):
+            X_splits = np.array_split(X_complete, self.total_chunks, axis=0)
+            y_splits = np.array_split(y_complete, self.total_chunks, axis=0)
+            for i in range(self.total_chunks):
                 self.chunks[i] = (X_splits[i], y_splits[i])
 
-            self.have = [True] * total_chunks
+            self.have = [True] * self.total_chunks
             self.peer_haves[self.context.rank] = self.have
 
             #inicia swarm loop como seed
@@ -110,7 +135,10 @@ class TorrentEngine:
             torrent_thread.start()
 
             # avisa o líder que está pronto
-            self.connector.send(self.context.rank, dest=self.context.leader_rank, tag=TAG_NODE_READY)
+            if not self.context._node_esta_ativo():
+                time.sleep(0.1)
+            else:
+                self.connector.send(self.context.rank, dest=self.context.leader_rank, tag=TAG_NODE_READY)
             print(f"[Worker {self.context.rank}] Dataset carregado localmente e pronto para o treino!")
             return X_complete, y_complete
 
@@ -119,6 +147,9 @@ class TorrentEngine:
         #Pega o chunk inicial
         initial_payload = None
         while initial_payload is None:
+            if not self.context._node_esta_ativo():
+                time.sleep(0.1)
+                continue
             initial_payload = self.connector.check_message(source=self.context.leader_rank, tag=TAG_TORRENT_SEED)
             time.sleep(0.05)
 
@@ -136,8 +167,8 @@ class TorrentEngine:
             time.sleep(0.1)
 
         #Concatena os pedaços e reconstrói o df
-        X_complete = np.vstack([self.chunks[i][0] for i in range(total_chunks)])
-        y_complete = np.concatenate([self.chunks[i][1] for i in range(total_chunks)])
+        X_complete = np.vstack([self.chunks[i][0] for i in range(self.total_chunks)])
+        y_complete = np.concatenate([self.chunks[i][1] for i in range(self.total_chunks)])
         
         #salva na pasta local
         os.makedirs(local_dir, exist_ok=True)
@@ -160,8 +191,13 @@ class TorrentEngine:
         
         print(f"[Nó {self.context.rank}] Entrou no loop P2P Swarm. Inventário: {self.have}")
         
-        #Por enquanto, loop roda enquanto existir qualquer nó que não tenha completado seu download
+
+
+        #Loop do swarm
         while not self.context.stop_event.is_set():
+            if not self.context._node_esta_ativo():
+                time.sleep(0.1)
+                continue
             now = time.time()
 
             # A cada 0.5s, divulga seu inventário (HAVE) para o cluster
@@ -181,10 +217,12 @@ class TorrentEngine:
                 #Processa pedido de metadados do torrent (apenas se for líder)
                 meta_req = self.connector.check_message(source=source, tag=TAG_TORRENT_META_REQ)
                 if meta_req is not None:
+
                     if self.context.rank == self.context.leader_rank:
                         print(f"[Líder] Enviando metadados respondendo ao pedido do Nó {source}")
-                        meta = {"total_chunks": size, "dataset_id": "breast_cancer"}
+                        meta = {"total_chunks": self.total_chunkds, "dataset_id": self.dataset_id}
                         self.connector.send(meta, dest=source, tag=TAG_TORRENT_META)
+
 
                 #Atualizar inventário de outro nó
                 peer_have = self.connector.check_message(source=source, tag=TAG_TORRENT_HAVE)
