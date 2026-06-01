@@ -99,20 +99,20 @@ class CommunicationService:
         
 
 
-        #sempre checa se alguém anunciou lider
-        #TODO Jogar isso em outro lugar, e ver se isso é de fato necessário
-        for source in range(self.context.size):
-            if source == self.context.rank:
-                continue
-            msg_announce = self.Poll(source=source, tag=TAG_LEADER_ANNOUNCE)
-            if msg_announce is not None:
-                with self.context.lock:
-                    self.context.leader_rank = msg_announce
-                    self.context.last_heartbeat = time.time()
-                    self.in_election = False
+        # #sempre checa se alguém anunciou lider
+        # #TODO Jogar isso em outro lugar, e ver se isso é de fato necessário
+        # for source in range(self.context.size):
+        #     if source == self.context.rank:
+        #         continue
+        #     msg_announce = self.Poll(source=source, tag=TAG_LEADER_ANNOUNCE)
+        #     if msg_announce is not None:
+        #         with self.context.lock:
+        #             self.context.leader_rank = msg_announce
+        #             self.context.last_heartbeat = time.time()
+        #             self.in_election = False
                 
-                    self.role_changer()
-                #return
+        #             self.role_changer()
+        #         #return
 
 
         #sempre checa se alguém pediu eleição pra poder participar, isso tem prioridade

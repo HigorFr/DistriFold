@@ -238,12 +238,10 @@ class LeaderWork:
         for worker_rank in range(self.context.size):
             if worker_rank != self.context.leader_rank:
 
-
                 task = {
                     "fold_id": -1,
                     "config": None
                 }
-
 
                 if self.comm_service:
                     self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task)

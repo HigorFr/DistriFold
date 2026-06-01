@@ -18,6 +18,7 @@ class NodeContext:
         self.start_time = time.time()
         self.last_internet_tick = time.time()
         self.recovering = False
+        self.torrent_active = False
 
         if self.rank == 0:
             self.has_dataset_completed = True

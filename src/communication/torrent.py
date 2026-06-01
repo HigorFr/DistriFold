@@ -16,7 +16,25 @@ class TorrentEngine:
         self.chunks = {}        #Guarda {chunk_id: (X_chunk, y_chunk)}
         self.have = []          #Vetor de booleanos: o que eu já possuo localmente
         self.peer_haves = {}    #{rank: have_list}
-        self.torrent_thread = threading.Thread(target=self._run_swarm_loop, daemon=True)
+        self.dataset_id = None
+        self.total_chunks = 0
+        self.torrent_thread = None
+
+
+    def _ensure_torrent_thread_started(self):
+        with self.context.lock:
+            if self.context.torrent_active:
+                return False
+            self.context.torrent_active = True
+
+        if self.torrent_thread is None or not self.torrent_thread.is_alive():
+            self.torrent_thread = threading.Thread(target=self._run_swarm_loop, daemon=True)
+            self.torrent_thread.start()
+            return True
+
+        with self.context.lock:
+            self.context.torrent_active = False
+        return False
 
 
     #Só lider faz a divisão dos primeiros pedaços
@@ -45,8 +63,7 @@ class TorrentEngine:
 
 
         #Passa a agir como seed normalmente
-        if not self.torrent_thread.is_alive():
-            self.torrent_thread.start()
+        self._ensure_torrent_thread_started()
 
     
     #Baixar os primeiros dataset do lider
@@ -63,7 +80,7 @@ class TorrentEngine:
         #Pega metadado do lider
         meta = None
         while meta is None:
-            time.sleep(0.5)
+            time.sleep(0.1)
 
             with self.context.lock:
                 leader = self.context.leader_rank
@@ -90,6 +107,7 @@ class TorrentEngine:
 
         #Caso de erros apenas
         dataset_id = meta.get("dataset_id")
+        self.dataset_id = dataset_id
 
         
         src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -117,8 +135,7 @@ class TorrentEngine:
             
 
             
-            if not self.torrent_thread.is_alive():
-                self.torrent_thread.start()
+            self._ensure_torrent_thread_started()
 
             # avisa o líder que está pronto
             if not self.context._node_esta_ativo():
@@ -164,8 +181,7 @@ class TorrentEngine:
 
         #entra no loop de ficar trocando, mesmo se completar
         
-        if not self.torrent_thread.is_alive():
-            self.torrent_thread.start()
+        self._ensure_torrent_thread_started()
 
         while not all(self.have):
             time.sleep(0.1)
@@ -182,6 +198,7 @@ class TorrentEngine:
 
         #Avisar o lider que terminou
         print(f"[Worker {self.context.rank}] Dataset 100% reconstruído com sucesso! Formato: {X_complete.shape}")
+        self.context.has_dataset_completed = True
         
         return X_complete, y_complete
 
@@ -194,7 +211,6 @@ class TorrentEngine:
         size = self.context.size
         last_broadcast = 0
         self.active_requests = []  #Guarda os pedido de dados que pedi
-        self.dataset_id = None
         
         
         print(f"[Nó {self.context.rank}] Entrou no loop P2P Swarm. Inventário: {self.have}")
@@ -204,8 +220,8 @@ class TorrentEngine:
         #Loop do swarm
         while not self.context.stop_event.is_set():
             if not self.context._node_esta_ativo():
-                time.sleep(0.1)
-                continue
+                    time.sleep(0.1)
+                    continue
             now = time.time()
 
 
@@ -226,7 +242,6 @@ class TorrentEngine:
                 #Processa pedido de metadados do torrent (apenas se for líder)
                 meta_req = self.connector.check_message(source=source, tag=TAG_TORRENT_META_REQ)
                 if meta_req is not None:
-                    
                     if self.context.rank == self.context.leader_rank and self.dataset_id is not None:
                         print(f"[Líder] Enviando metadados respondendo ao pedido do Nó {source}")
                         meta = {"total_chunks": self.total_chunks, "dataset_id": self.dataset_id}
@@ -274,6 +289,9 @@ class TorrentEngine:
             # Limpa requisições enviadas concluídas para evitar vazamento de recursos
             self.active_requests = [req for req in self.active_requests if not req.Test()]
             time.sleep(0.05)
+
+        with self.context.lock:
+            self.context.torrent_active = False
 
 
     #Função para verficiar se todo mundo tem o dataset completo

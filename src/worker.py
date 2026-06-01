@@ -23,12 +23,11 @@ class WorkerWork:
     def run(self):
         
 
-        
-
         #Se tiver voltando ele não faz eleição
         if not self.context.recovering and self.context.leader_rank is None:
             print(f"[Worker {self.context.rank}] Iniciando e disparando eleição para descobrir líder...")
             self.comm_service.start_election()
+            time.sleep(2)
 
 
         #Aguarda a eleição do líder inicial antes de iniciar qualquer trabalho
@@ -73,15 +72,20 @@ class WorkerWork:
         while not self.context.stop_event.is_set():
             time.sleep(0.1)
 
+
             if self.context.leader_rank == self.context.rank:
-                print(f"[Nó {self.context.rank}] Virou líder, encerrando papel de Worker.")
+                print(f"[Nó {self.context.rank}] Sou o Líder, ignorando papel de Worker.")
                 return
             
             # if not self.context._node_esta_ativo():
             #     time.sleep(0.1)
             #     continue
 
-    
+
+            while self.context.recovering:
+                time.sleep(0.1)
+                self.tratar_retorno()
+
 
             #Escuta ordens do liders
             with self.context.lock:
@@ -142,7 +146,7 @@ class WorkerWork:
 
     #TRATAMENTO DE RETORNO
     def tratar_retorno(self):
-        print('Tentando Retornar, perguntando lider atual para os vizinhos')
+        print(f'[Worker {self.context.rank}] Tentando Retornar')
         now = time.time()
         if now - self.last_query_time > 0.5:
             if self.next_query_rank == self.context.rank:
@@ -156,18 +160,20 @@ class WorkerWork:
             with self.context.lock:
                 self.context.leader_rank = leader_reply
                 self.context.last_heartbeat = time.time()
-                print(f'Descobri líder, ele é {leader_reply}')
+                print(f'[Worker {self.context.rank}] Descobri líder, ele é {leader_reply}')
 
 
         if self.context.leader_rank == self.context.rank and self.context.rank == 0:
-            print(f'Lider sou eu devido falta do dataset, usando meu contexto')
+            print(f'[Worker {self.context.rank}] Lider sou eu devido falta do dataset, usando meu contexto')
             self.context.recovering = False
             self.context.last_heartbeat = time.time()
             return
 
 
         if self.context.leader_rank is not None:
+            print(f'[Worker {self.context.rank}] Pedindo contexto para o líder')
             self.comm_service.enqueue("worker", dest=self.context.leader_rank, tag=TAG_CONTEXT_REQ, payload="CTX")
+            time.sleep(0.3)
             ctx_msg = self.comm_service.Poll(source=self.context.leader_rank, tag=TAG_STATE_SYNC)
             
 
@@ -177,9 +183,10 @@ class WorkerWork:
                     self.context.recovering = False
                     self.context.last_heartbeat = time.time()
 
-                print(f"Worker {self.context.rank} sincronizou contexto após retorno")
-
-            else: 
-                print('sem retorno')
+                print(f"[Worker {self.context.rank}] Sincronizei contexto após retorno")
+                return
+            
+        else: 
+            print('Sem retorno')
 
                 

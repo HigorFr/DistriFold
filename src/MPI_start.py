@@ -64,7 +64,7 @@ class MainNode:
         self.leader_thread = None
         self.worker_thread = None
 
-
+    
 
 
 
@@ -90,18 +90,28 @@ class MainNode:
             print(f"[Nó {self.context.rank}] Tentativa de ativar duas Threads Líder Cancelada")
             return
         
-        print(f"[Nó {self.context.rank}] Ativando Thread de Líder")
+        print(f"[Nó {self.context.rank}] Ativando Thread Líder")
         self.leader_thread = threading.Thread(target=self.leader_work.run, daemon=True)
         self.leader_thread.start()
 
 
 
     def start_work_thread(self):
+        if self.worker_thread and self.worker_thread.is_alive():
+            print(f"[Nó {self.context.rank}] Tentativa de ativar duas Threads Worker Cancelada")
+            return
+
+        print(f"[Nó {self.context.rank}] Ativando Thread Worker")
         self.worker_thread = threading.Thread(target=self.worker_work.run, daemon=True)
         self.worker_thread.start()
 
 
     def start_comm_thread(self):
+        if self.comm_thread and self.comm_thread.is_alive():
+            print(f"[Nó {self.context.rank}] Tentativa de ativar duas Threads Comm Cancelada")
+            return
+
+        print(f"[Nó {self.context.rank}] Ativando Thread Comm")
         self.comm_thread = threading.Thread(target=self.comm_service.run, daemon=True)
         self.comm_thread.start()
 
