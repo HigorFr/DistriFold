@@ -185,8 +185,7 @@ class LeaderWork:
                 if worker_rank == self.context.leader_rank:
                     continue
 
-                
-    
+                res = None
                 if self.comm_service:
                     res = self.comm_service.Poll(source=worker_rank, tag=TAG_RESULT)
                 if res:

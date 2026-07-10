@@ -73,7 +73,9 @@ class WorkerWork:
             time.sleep(0.1)
 
 
-            if self.context.leader_rank == self.context.rank:
+            with self.context.lock:
+                is_self_leader = (self.context.leader_rank == self.context.rank)
+            if is_self_leader:
                 print(f"[Nó {self.context.rank}] Sou o Líder, ignorando papel de Worker.")
                 return
             
@@ -89,12 +91,13 @@ class WorkerWork:
 
             #Escuta ordens do liders
             with self.context.lock:
-                if self.context.leader_rank is None:
+                current_leader = self.context.leader_rank
+                if current_leader is None:
                     continue
 
             msg = None
             if self.comm_service:
-                msg = self.comm_service.Poll(source=self.context.leader_rank, tag=TAG_TASK)
+                msg = self.comm_service.Poll(source=current_leader, tag=TAG_TASK)
             
             if msg is None:
                 continue

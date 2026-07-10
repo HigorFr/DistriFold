@@ -58,14 +58,8 @@ class CommunicationService:
 
                     with self.queue_lock:
                         self.outbox = {"leader": [], "worker": []}
-                        self.inbox = []
-
-            
-
-
-        
-        #parte do código para mudar:
-        
+                        self.inbox = []        
+        #parte do código para mudar.
 
         #sempre checa se alguem perguntou por lider e resonde
         #TODO Jogar isso em outro lugar
@@ -88,8 +82,6 @@ class CommunicationService:
                     with self.context.lock:
                         ctx_payload = dict(self.context.leader_context)
                     self.connector.isend(ctx_payload, dest=source, tag=TAG_STATE_SYNC)
-        
-
 
         # #sempre checa se alguém anunciou lider
         # #TODO Jogar isso em outro lugar, e ver se isso é de fato necessário
@@ -225,7 +217,10 @@ class CommunicationService:
             time.sleep(0.05)
 
         if lowest is None:
-            lowest = 0
+            print(f"[Nó {self.context.rank}] Eleição falhou: nenhum candidato elegível.")
+            with self.context.lock:
+                self.in_election = False
+            return
         
         if lowest == self.context.rank:
             print(f"[Nó {self.context.rank}] Fim da contagem de tempo. Sou o menor ativo. Novo líder eleito!")
@@ -256,7 +251,8 @@ class CommunicationService:
                 self.context.leader_context = max(contexts, key=lambda c: c.get("epoch", 0))
 
 
-        self.in_election = False
+        with self.context.lock:
+            self.in_election = False
         self.role_changer()
   
 
@@ -275,7 +271,9 @@ class CommunicationService:
         if msg:
             print(f"Worker {self.context.rank} recebeu PING do líder")
 
-            if self.context.ready_to_work:
+            with self.context.lock:
+                is_ready = self.context.ready_to_work
+            if is_ready:
                 self.enqueue("worker", dest=self.leader_tag, tag=TAG_NODE_READY, payload="ACK")
             else:
                 self.enqueue("worker", dest=self.leader_tag, tag=TAG_ACK, payload="ACK")
@@ -291,13 +289,13 @@ class CommunicationService:
                     print(f"Worker {self.context.rank} sincronizou contexto para epoch {state_msg['epoch']}")
 
 
-        if self.context.leader_rank != None:
-            with self.context.lock:
-                elapsed = time.time() - self.context.last_heartbeat
-            if elapsed > self.timeout_seconds:
-                print(f"Worker {self.context.rank} detectou timeout do líder!")
-                self.start_election()
-                time.sleep(0.1)
+        with self.context.lock:
+            has_leader = self.context.leader_rank is not None
+            elapsed = time.time() - self.context.last_heartbeat
+        if has_leader and elapsed > self.timeout_seconds:
+            print(f"Worker {self.context.rank} detectou timeout do líder!")
+            self.start_election()
+            time.sleep(0.1)
 
 
 
