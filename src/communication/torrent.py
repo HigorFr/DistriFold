@@ -211,6 +211,7 @@ class TorrentEngine:
         size = self.context.size
         last_broadcast = 0
         self.active_requests = []  #Guarda os pedido de dados que pedi
+        self._local_complete_time = None  #Timestamp de quando completamos localmente
         
         
         print(f"[Nó {self.context.rank}] Entrou no loop P2P Swarm. Inventário: {self.have}")
@@ -227,7 +228,6 @@ class TorrentEngine:
 
             # A cada 0.5s, divulga seu inventário (HAVE) para o cluster
             if now - last_broadcast > 0.5:
-                # print(f"[Nó {self.context.rank}] Divulgando meu inventário: {self.have}") 
                 for dest in range(size):
                     if dest != self.context.rank:
                         self.connector.isend(self.have, dest=dest, tag=TAG_TORRENT_HAVE)
@@ -251,10 +251,6 @@ class TorrentEngine:
                 #Atualizar inventário de outro nó
                 peer_have = self.connector.check_message(source=source, tag=TAG_TORRENT_HAVE)
                 if peer_have:
-
-                    #TODO descomentar isso
-                    #print(f"[Nó {self.context.rank}] Recebi HAVE do Nó {source}: {peer_have}")
-
                     self.peer_haves[source] = peer_have
 
                     #Solicita caso apareceu chunk que precisa
@@ -288,6 +284,18 @@ class TorrentEngine:
             
             # Limpa requisições enviadas concluídas para evitar vazamento de recursos
             self.active_requests = [req for req in self.active_requests if not req.Test()]
+
+            # Verifica se o swarm pode ser encerrado
+            if all(self.have):
+                if self._local_complete_time is None:
+                    self._local_complete_time = time.time()
+
+                # Espera um período de graça (3s) para servir requests pendentes de outros nós
+                grace_elapsed = time.time() - self._local_complete_time
+                if grace_elapsed > 3.0 and self._all_nodes_completed():
+                    print(f"[Nó {self.context.rank}] Todos os nós possuem o dataset completo. Encerrando swarm P2P.")
+                    break
+
             time.sleep(0.05)
 
         with self.context.lock:

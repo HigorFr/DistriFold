@@ -1,4 +1,5 @@
 import time
+import threading
 from logger import print_to_node as print
 import numpy as np
 from sklearn.model_selection import KFold
@@ -6,6 +7,7 @@ from node_context import NodeContext
 from communication.network import MPIConnector
 from communication.torrent import TorrentEngine
 from communication.communication_tags import *
+from MLP import train_fold_from_arrays
 import os
 
 
@@ -21,6 +23,10 @@ class LeaderWork:
         self.torrent = TorrentEngine(context, connector)
         self.num_folds = FOLD_Config['n_splits']
         self.results = {}
+
+        # Treino local do líder
+        self._local_train_thread = None
+        self._local_result = None
 
 
     
@@ -152,7 +158,6 @@ class LeaderWork:
                 
                 for worker_rank in ctx["ready_nodes"]:
                     if worker_rank == self.context.leader_rank:
-                        #TODO Aqui colocar para o lider trabalhar localmente também
                         continue
                     
                     if worker_rank not in active_assignments and len(pending_folds) > 0:
@@ -174,13 +179,29 @@ class LeaderWork:
                         # Envia a tarefa (apenas o fold_id)
                         if self.comm_service:
                             print(f'pending_folds: {pending_folds}')
-                            self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task) #leader sempre envia config e o id do fold pra ele.
+                            self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task)
                         
                         print(f"[Líder {self.context.rank}] Atribuiu Fold {fold_id} para o Worker {worker_rank}")
 
+                # Treino local do líder: se não está treinando e há folds pendentes
+                leader_idle = (self._local_train_thread is None or not self._local_train_thread.is_alive())
+                if leader_idle and len(pending_folds) > 0:
+                    fold_id = pending_folds.pop(0)
+                    active_assignments[self.context.rank] = fold_id
+                    ctx["epoch"] += 1
+                    self.context.context_dirty = True
+
+                    print(f"[Líder {self.context.rank}] Treinando Fold {fold_id} localmente...")
+                    self._local_train_thread = threading.Thread(
+                        target=self._train_fold_locally,
+                        args=(X, y, fold_id),
+                        daemon=True
+                    )
+                    self._local_train_thread.start()
 
 
-            #Coleta resultados (tb não-bloqueante)
+
+            #Coleta resultados dos workers (não-bloqueante)
             for worker_rank in range(self.context.size):
                 if worker_rank == self.context.leader_rank:
                     continue
@@ -206,6 +227,25 @@ class LeaderWork:
                         ctx["epoch"] += 1
                         self.context.context_dirty = True
                     print(f"[Líder {self.context.rank}] Sucesso! Recebido resultado do Fold {fold_id} do Worker {worker_rank}")
+
+            # Coleta resultado do treino local do líder (não-bloqueante)
+            if self._local_result is not None:
+                res = self._local_result
+                self._local_result = None
+                fold_id = res["fold_id"]
+                with self.context.lock:
+                    ctx = self.context.leader_context
+                    if fold_id not in ctx["completed_folds"]:
+                        ctx["completed_folds"][fold_id] = res["metrics"]
+
+                        if self.context.rank in ctx["active_assignments"]:
+                            del ctx["active_assignments"][self.context.rank]
+                        if fold_id in ctx["pending_folds"]:
+                            ctx["pending_folds"].remove(fold_id)
+
+                        ctx["epoch"] += 1
+                        self.context.context_dirty = True
+                print(f"[Líder {self.context.rank}] Sucesso! Concluiu treino local do Fold {fold_id}")
 
             time.sleep(0.1)
 
@@ -248,6 +288,25 @@ class LeaderWork:
         #mata o lider
         self.context.stop_event.set()
 
+
+    def _train_fold_locally(self, X, y, fold_id):
+        """Treina um fold localmente na thread do líder (background)."""
+        try:
+            kf = KFold(**self.FOLD_Config)
+            splits = list(kf.split(X))
+            train_idx, test_idx = splits[fold_id]
+            res = train_fold_from_arrays(X, y, train_idx, test_idx, self.MLP_Config, fold_id=fold_id)
+            self._local_result = res
+            print(f"[Líder {self.context.rank}] Concluiu treino local do Fold {fold_id}")
+        except Exception as e:
+            print(f"[Líder {self.context.rank}] Erro no treino local do Fold {fold_id}: {e}")
+            # Devolve fold para pendentes em caso de erro
+            with self.context.lock:
+                ctx = self.context.leader_context
+                if fold_id not in ctx["completed_folds"]:
+                    ctx["pending_folds"].append(fold_id)
+                if self.context.rank in ctx["active_assignments"]:
+                    del ctx["active_assignments"][self.context.rank]
 
 
     def _carregar_dataset(self):
