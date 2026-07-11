@@ -49,6 +49,10 @@ class CommunicationService:
             with self.context.lock:
                 if not self.context.recovering:
                     warn(f"[Nó {self.context.rank}] Voltando de queda...")
+                    try:
+                        self.connector.vis_logger.log_event("node_state", state="recovering")
+                    except Exception:
+                        pass
                     self.context.recovering = True
                     self.context.old_leader = self.context.leader_rank
                     self.context.leader_rank = None
@@ -139,6 +143,10 @@ class CommunicationService:
 
 
         print(f"[Nó {self.context.rank}] Iniciando eleição...")
+        try:
+            self.connector.vis_logger.log_event("election_start")
+        except Exception:
+            pass
         for dest in range(self.context.size):
             if dest == self.context.rank:
                 continue
@@ -208,6 +216,10 @@ class CommunicationService:
         
         if lowest == self.context.rank:
             print(f"[Nó {self.context.rank}] Fim da contagem de tempo. Sou o menor ativo. Novo líder eleito!")
+            try:
+                self.connector.vis_logger.log_event("leader_elected", leader=lowest)
+            except Exception:
+                pass
 
             
 
@@ -226,6 +238,10 @@ class CommunicationService:
 
         else:
             print(f"[Nó {self.context.rank}] Fim da contagem de tempo. Menor é o {lowest}. Novo líder eleito!")
+            try:
+                self.connector.vis_logger.log_event("leader_elected", leader=lowest)
+            except Exception:
+                pass
         
 
         with self.context.lock:
@@ -280,6 +296,16 @@ class CommunicationService:
             warn(f"Worker {self.context.rank} detectou timeout do líder!")
             self.start_election()
             time.sleep(0.1)
+        elif not has_leader and not self.in_election:
+            # Se não há líder no sistema e não estamos em eleição, convocamos uma nova
+            # eleição periodicamente a cada 5 segundos para tentar reestabelecer coordenação
+            if not hasattr(self, 'last_no_leader_election_time'):
+                self.last_no_leader_election_time = time.time()
+            if time.time() - self.last_no_leader_election_time > 5.0:
+                warn(f"Worker {self.context.rank} detectou falta de líder ativo no sistema. Convocando nova eleição...")
+                self.last_no_leader_election_time = time.time()
+                self.start_election()
+                time.sleep(0.1)
 
 
 

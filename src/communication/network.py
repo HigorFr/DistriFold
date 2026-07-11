@@ -7,14 +7,29 @@ class MPIConnector:
         self.comm = comm
         self._comm_lock = threading.Lock()
         self._pending_isends = []
+        try:
+            self.rank = comm.Get_rank()
+        except Exception:
+            self.rank = 0
+        from visualizer_logger import VisualizerLogger, TAG_NAMES
+        self.vis_logger = VisualizerLogger(self.rank)
+        self.tag_names = TAG_NAMES
 
     #esperar receber
     def send(self, data, dest, tag):
+        try:
+            self.vis_logger.log_event("msg_sent", dest=dest, tag=tag, tag_name=self.tag_names.get(tag, str(tag)), data_summary=str(data)[:100])
+        except Exception:
+            pass
         with self._comm_lock:
             self.comm.send(data, dest=dest, tag=tag)
 
     #joga pra fila
     def isend(self, data, dest, tag):
+        try:
+            self.vis_logger.log_event("msg_sent", dest=dest, tag=tag, tag_name=self.tag_names.get(tag, str(tag)), data_summary=str(data)[:100])
+        except Exception:
+            pass
         with self._comm_lock:
             request = self.comm.isend(data, dest=dest, tag=tag)
             self._pending_isends.append(request)
@@ -38,7 +53,12 @@ class MPIConnector:
             self._cleanup_pending_isends_locked()
             if self.comm.iprobe(source=source, tag=tag):
                 try:
-                    return self.comm.recv(source=source, tag=tag)
+                    data = self.comm.recv(source=source, tag=tag)
+                    try:
+                        self.vis_logger.log_event("msg_received", src=source, tag=tag, tag_name=self.tag_names.get(tag, str(tag)), data_summary=str(data)[:100])
+                    except Exception:
+                        pass
+                    return data
                 except Exception as e:
                     try:
                         rank = self.comm.Get_rank()
@@ -48,8 +68,6 @@ class MPIConnector:
                     raise
         return None
     
-
-
 
     def check_message_all(self, source, tag):
         if source is None:
@@ -69,6 +87,10 @@ class MPIConnector:
                         tag=real_tag,
                         status=status
                     )
+                    try:
+                        self.vis_logger.log_event("msg_received", src=real_source, tag=real_tag, tag_name=self.tag_names.get(real_tag, str(real_tag)), data_summary=str(data)[:100])
+                    except Exception:
+                        pass
                     return {
                         "source": real_source,
                         "tag": real_tag,

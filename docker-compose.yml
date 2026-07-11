@@ -14,10 +14,10 @@ services:
       dockerfile: Dockerfile
     container_name: distrifold
     environment:
-      - NUM_NODES=${NUM_NODES:-2}
+      - NUM_NODES=${NUM_NODES:-6}
     volumes:
       # Persiste os logs e dados locais gerados por cada nó
-      - ./output:/app/src/Locals
+      - ./output:/app/src/Locals:z
     # Descomente para limitar recursos (opcional)
     # deploy:
     #   resources:
@@ -32,9 +32,9 @@ services:
       dockerfile: Dockerfile
     container_name: distrifold-tests
     environment:
-      - NUM_NODES=${NUM_NODES:-3}
+      - NUM_NODES=${NUM_NODES:-6}
     command: python -B tests/run_tests.py
     volumes:
-      - ./test-output:/app/src/Locals
+      - ./test-output:/app/src/Locals:z
     profiles:
       - test

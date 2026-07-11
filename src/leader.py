@@ -12,13 +12,14 @@ import os
 
 
 class LeaderWork:
-    def __init__(self, context: NodeContext, connector: MPIConnector, dataset_id, MLP_Config, FOLD_Config, comm_service=None):
+    def __init__(self, context: NodeContext, connector: MPIConnector, dataset_id, MLP_Config, FOLD_Config, comm_service=None, allow_early_training=False):
         self.context = context
         self.connector = connector
         self.comm_service = comm_service
         self.dataset_id = dataset_id
         self.MLP_Config = MLP_Config
         self.FOLD_Config = FOLD_Config
+        self.allow_early_training = allow_early_training
 
         self.torrent = TorrentEngine(context, connector)
         self.num_folds = FOLD_Config['n_splits']
@@ -41,6 +42,11 @@ class LeaderWork:
         #Distribui o dataset apenas se for a liderança inicial (epoch == 0)
         with self.context.lock:
             is_initial_leader = (self.context.leader_context["epoch"] == 0)
+
+        try:
+            self.connector.vis_logger.log_event("node_state", state="leader_active")
+        except Exception:
+            pass
 
 
 
@@ -104,6 +110,10 @@ class LeaderWork:
                     msg = self.comm_service.Poll(source=source, tag=TAG_ACK)
                     if msg is not None:
                         debug(f"Líder recebeu ACK de {source}")
+                        try:
+                            self.connector.vis_logger.log_event("node_alive", subject=source)
+                        except Exception:
+                            pass
                         with self.context.lock:
                             self.context.setAlive(source)
                             self.context.leader_context["last_ack"][source] = time.time()
@@ -112,6 +122,10 @@ class LeaderWork:
                     msg_ready = self.comm_service.Poll(source=source, tag=TAG_NODE_READY)
                     if msg_ready is not None:
                         debug(f"Líder recebeu ACK-Pronto do Nó {source}")
+                        try:
+                            self.connector.vis_logger.log_event("node_ready", subject=source)
+                        except Exception:
+                            pass
                         with self.context.lock:
                             self.context.setAlive(source)
                             self.context.setReady(source)
@@ -129,6 +143,10 @@ class LeaderWork:
                         is_alive = source in self.context.leader_context["alive_nodes"]
                     if is_alive and (last_ack is None or (now - last_ack) > self.comm_service.timeout_seconds):
                         warn(f"Líder detectou timeout do Nó {source} (sem ACK recente)!")
+                        try:
+                            self.connector.vis_logger.log_event("node_timeout", subject=source)
+                        except Exception:
+                            pass
                         with self.context.lock:
                             self.context.setDead(source)
 
@@ -179,13 +197,26 @@ class LeaderWork:
 
                 # Treino local do líder: se não está treinando e há folds pendentes
                 leader_idle = (self._local_train_thread is None or not self._local_train_thread.is_alive())
-                if leader_idle and len(pending_folds) > 0:
+                
+                can_leader_train = True
+                if not self.allow_early_training:
+                    # Se treino precoce não for permitido, todos os workers ativos/vivos devem estar prontos (ready_nodes)
+                    alive_workers = [w for w in ctx["alive_nodes"] if w != self.context.rank]
+                    ready_workers = [w for w in ctx["ready_nodes"] if w != self.context.rank]
+                    if len(alive_workers) == 0 or not all(w in ready_workers for w in alive_workers):
+                        can_leader_train = False
+
+                if leader_idle and len(pending_folds) > 0 and can_leader_train:
                     fold_id = pending_folds.pop(0)
                     active_assignments[self.context.rank] = fold_id
                     ctx["epoch"] += 1
                     self.context.context_dirty = True
 
                     print(f"[Líder {self.context.rank}] Treinando Fold {fold_id} localmente...")
+                    try:
+                        self.connector.vis_logger.log_event("train_start", fold_id=fold_id)
+                    except Exception:
+                        pass
                     self._local_train_thread = threading.Thread(
                         target=self._train_fold_locally,
                         args=(X, y, fold_id),
@@ -295,6 +326,10 @@ class LeaderWork:
             res = train_fold_from_arrays(X, y, train_idx, test_idx, self.MLP_Config, fold_id=fold_id)
             self._local_result = res
             print(f"[Líder {self.context.rank}] Concluiu treino local do Fold {fold_id}")
+            try:
+                self.connector.vis_logger.log_event("train_complete", fold_id=fold_id, metrics=res["metrics"])
+            except Exception:
+                pass
         except Exception as e:
             print(f"[Líder {self.context.rank}] Erro no treino local do Fold {fold_id}: {e}")
             # Devolve fold para pendentes em caso de erro
@@ -313,7 +348,16 @@ class LeaderWork:
         local_dir = os.path.join(src_dir, "Locals", f"Rank {self.context.rank}")
         file_path = os.path.join(local_dir, f"{self.dataset_id}.npz")
 
-        
+        if not os.path.exists(file_path) and self.dataset_id == "breast_cancer":
+            print(f"[Líder {self.context.rank}] Dataset '{self.dataset_id}' não encontrado localmente. Gerando e salvando...")
+            try:
+                os.makedirs(local_dir, exist_ok=True)
+                from sklearn.datasets import load_breast_cancer
+                data = load_breast_cancer()
+                np.savez(file_path, X=data.data, y=data.target)
+                print(f"[Líder {self.context.rank}] Dataset '{self.dataset_id}' salvo com sucesso em {file_path}")
+            except Exception as e:
+                print(f"[Líder {self.context.rank}] Falha ao gerar dataset: {e}")
 
         if os.path.exists(file_path):
             print(f"[Worker {self.context.rank}] Dataset '{self.dataset_id}' encontrado localmente! Carregando de {file_path}")

@@ -70,7 +70,7 @@ ENV PYTHONUNBUFFERED=1
 # ------------------------------------------------------------
 # 7. Número de nós MPI (pode ser sobrescrito com -e NUM_NODES=N)
 # ------------------------------------------------------------
-ENV NUM_NODES=2
+ENV NUM_NODES=6
 
 # ------------------------------------------------------------
 # 8. Entrypoint padrão

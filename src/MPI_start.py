@@ -16,19 +16,23 @@ from logger import print_to_node as print
 provided = MPI.Init_thread(MPI.THREAD_MULTIPLE)
 
 
+# Configura se o líder pode treinar folds localmente antes de todos os workers ativos estarem prontos.
+# Padrão: False (o líder aguarda os workers ativos estarem prontos antes de treinar).
+ALLOW_LEADER_EARLY_TRAINING = os.getenv("ALLOW_LEADER_EARLY_TRAINING", "False").lower() in ("true", "1", "yes")
+
 DATASET_ID = "breast_cancer"
 
 CONFIG_FOLD = {
-    "n_splits":8, 
+    "n_splits":64, 
     "shuffle":True, 
     'random_state':42
-            }
+}
 
 
 CONFIG_MLP = {
         "h1": 64, "h2": 16, "lr": 0.001,
-        "epochs": 200, "batch_size": 4
-                }
+        "epochs": 600, "batch_size": 4
+}
 
 
 TESTE_REDUNDANCIA = {
@@ -56,7 +60,15 @@ class MainNode:
             role_changer=self.role_changer
         )
 
-        self.leader_work = LeaderWork(self.context, self.connector_data, DATASET_ID, CONFIG_MLP, CONFIG_FOLD,   comm_service=self.comm_service)
+        self.leader_work = LeaderWork(
+            self.context, 
+            self.connector_data, 
+            DATASET_ID, 
+            CONFIG_MLP, 
+            CONFIG_FOLD, 
+            comm_service=self.comm_service,
+            allow_early_training=ALLOW_LEADER_EARLY_TRAINING
+        )
         self.worker_work = WorkerWork(self.context, self.connector_data, comm_service=self.comm_service)
 
         #Controle de Threads

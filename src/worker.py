@@ -60,6 +60,10 @@ class WorkerWork:
 
         self.context.ready_to_work = True
         print(f"[Worker {self.context.rank}] Pronto e aguardando ordens de Folds do Líder.")
+        try:
+            self.connector.vis_logger.log_event("node_state", state="ready")
+        except Exception:
+            pass
 
 
         
@@ -111,6 +115,10 @@ class WorkerWork:
                     break
                 
                 print(f"[Worker {self.context.rank}] Treinando Fold {fold_id}...")
+                try:
+                    self.connector.vis_logger.log_event("train_start", fold_id=fold_id)
+                except Exception:
+                    pass
                 
                 
                 config = msg['config']
@@ -128,6 +136,10 @@ class WorkerWork:
                 
                 #Treina localmente usando a classe do MPL
                 res = train_fold_from_arrays(X, y, train_idx, test_idx, config_MLP, fold_id=fold_id)
+                try:
+                    self.connector.vis_logger.log_event("train_complete", fold_id=fold_id, metrics=res["metrics"])
+                except Exception:
+                    pass
                 
  
                 
@@ -148,6 +160,11 @@ class WorkerWork:
     #TRATAMENTO DE RETORNO
     def tratar_retorno(self):
         debug(f'[Worker {self.context.rank}] Tentando Retornar')
+        
+        # Rastreia o início do processo de recuperação
+        if not hasattr(self, 'recovery_start_time') or self.recovery_start_time is None:
+            self.recovery_start_time = time.time()
+
         now = time.time()
         if now - self.last_query_time > 0.5:
             if self.next_query_rank == self.context.rank:
@@ -167,6 +184,7 @@ class WorkerWork:
         if self.context.leader_rank == self.context.rank and self.context.rank == 0:
             print(f'[Worker {self.context.rank}] Lider sou eu devido falta do dataset, usando meu contexto')
             self.context.recovering = False
+            self.recovery_start_time = None
             self.context.last_heartbeat = time.time()
             return
 
@@ -182,12 +200,30 @@ class WorkerWork:
                 with self.context.lock:
                     self.context.leader_context = ctx_msg
                     self.context.recovering = False
+                    self.recovery_start_time = None
                     self.context.last_heartbeat = time.time()
 
                 print(f"[Worker {self.context.rank}] Sincronizei contexto após retorno")
+                try:
+                    self.connector.vis_logger.log_event("node_state", state="active")
+                except Exception:
+                    pass
                 return
             
         else: 
             debug(f'[Worker {self.context.rank}] Sem retorno do líder')
+            # Se ninguém respondeu por 3 segundos, e somos elegíveis (com dataset completo),
+            # nós mesmos convocamos uma nova eleição para resolver o impasse!
+            if now - self.recovery_start_time > 3.0:
+                if self.context.has_dataset_completed:
+                    print(f"[Worker {self.context.rank}] Sem resposta do líder por 3s após retorno. Convocando nova eleição...")
+                    self.recovery_start_time = None
+                    self.comm_service.start_election()
+                    time.sleep(2.5) # Aguarda a eleição concluir
+                    if self.context.leader_rank == self.context.rank:
+                        self.context.recovering = False
+                        self.context.last_heartbeat = time.time()
+                        self.comm_service.role_changer()
+                        return
 
                 

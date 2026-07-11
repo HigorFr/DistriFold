@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DistriFold - Visualizador de Rede & Treinamento MPI</title>
+    <!-- Fonte Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- D3.js para Layout do Grafo -->
+    <script src="https://unpkg.com/d3@7.8.5/dist/d3.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent-cyan: #06b6d4;
+            --accent-amber: #f59e0b;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-purple: #8b5cf6;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(6, 182, 212, 0.15) 0px, transparent 50%),
+                radial-gradient(at 50% 0%, rgba(139, 92, 246, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(245, 158, 11, 0.08) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Layout Grid */
+        .app-container {
+            display: grid;
+            grid-template-rows: 70px 1fr;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Top Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 2rem;
+            background: rgba(11, 15, 25, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            z-index: 10;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.1rem;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        }
+
+        .logo-text h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            background: linear-gradient(90deg, var(--text-main), var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-text span {
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        /* Controles de Simulação */
+        .controls-panel {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.5rem 1.25rem;
+            border-radius: 30px;
+            border: 1px solid var(--border-color);
+        }
+
+        .btn {
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--accent-cyan);
+        }
+
+        .btn-primary {
+            background: var(--accent-cyan);
+            color: var(--bg-color);
+            box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: #22d3ee;
+            color: var(--bg-color);
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.5);
+        }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .speed-control input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 80px;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+        }
+
+        .speed-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            cursor: pointer;
+            box-shadow: 0 0 5px rgba(6, 182, 212, 0.8);
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-muted);
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .status-dot.active {
+            background: var(--accent-green);
+            color: var(--accent-green);
+            animation: pulse 1.5s infinite alternate;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+
+        /* Main Workspace */
+        .workspace {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            height: calc(100vh - 70px);
+            position: relative;
+        }
+
+        /* Pane da Rede (Grafo) */
+        .network-pane {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #graph-svg {
+            width: 100%;
+            flex: 1;
+            cursor: grab;
+        }
+
+        #graph-svg:active {
+            cursor: grabbing;
+        }
+
+        /* Legend Panel */
+        .legend-card {
+            position: absolute;
+            bottom: 1.5rem;
+            left: 1.5rem;
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            font-size: 0.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            pointer-events: none;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+        }
+
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+            color: var(--text-main);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 0.4rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-muted);
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 1px solid transparent;
+        }
+
+        /* Painel Lateral */
+        .sidebar {
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(20px);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            max-height: 100%;
+            box-shadow: -10px 0 30px rgba(0,0,0,0.3);
+        }
+
+        .panel-section {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .panel-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--accent-cyan);
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Widgets Estatísticas */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .stat-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            padding: 0.75rem 1rem;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .stat-val {
+            font-size: 1.25rem;
+            font-weight: 600;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .stat-val.gold { color: var(--accent-amber); }
+        .stat-val.cyan { color: var(--accent-cyan); }
+        .stat-val.green { color: var(--accent-green); }
+
+        /* Fold List & Progress */
+        .fold-progress-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .fold-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .folds-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+
+        .folds-table th {
+            text-align: left;
+            padding: 0.4rem;
+            color: var(--text-muted);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-weight: 500;
+        }
+
+        .folds-table td {
+            padding: 0.4rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .badge {
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        .badge-pending { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+        .badge-training { background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); animation: pulse 1s infinite alternate; }
+        .badge-completed { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); }
+
+        /* Timeline de Eventos */
+        .timeline-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 250px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding-right: 0.5rem;
+        }
+
+        .timeline-container::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .timeline-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        .timeline-item {
+            padding: 0.5rem;
+            background: rgba(255, 255, 255, 0.01);
+            border-left: 2px solid var(--border-color);
+            border-radius: 0 6px 6px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+
+        .timeline-item.msg { border-left-color: var(--accent-cyan); }
+        .timeline-item.state { border-left-color: var(--accent-purple); }
+        .timeline-item.torrent { border-left-color: var(--accent-green); }
+        .timeline-item.train { border-left-color: var(--accent-amber); }
+        .timeline-item.election { border-left-color: var(--accent-red); }
+
+        .timeline-meta {
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-muted);
+            font-size: 0.65rem;
+        }
+
+        .timeline-desc {
+            color: var(--text-main);
+        }
+
+        /* SVG Nodes styling */
+        .node-circle {
+            transition: stroke 0.3s, r 0.3s;
+        }
+
+        .node-label {
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            font-size: 11px;
+            fill: #ffffff;
+            text-anchor: middle;
+            dominant-baseline: central;
+            pointer-events: none;
+        }
+
+        .node-ring {
+            fill: none;
+            stroke-dasharray: 283; /* 2 * PI * r */
+            stroke-dashoffset: 283;
+            transform: rotate(-90deg);
+            transform-origin: center;
+            transition: stroke-dashoffset 0.4s ease;
+        }
+
+        .link-line {
+            stroke: rgba(255, 255, 255, 0.05);
+            stroke-width: 1.5px;
+            fill: none;
+            transition: stroke 2s ease, stroke-width 2s ease, opacity 2s ease;
+        }
+
+        .link-line.active-state {
+            stroke: #3b82f6; /* Blue */
+            stroke-width: 3.5px;
+            opacity: 0.95;
+            transition: none;
+        }
+        .link-line.active-train {
+            stroke: #f59e0b; /* Amber */
+            stroke-width: 3.5px;
+            opacity: 0.95;
+            transition: none;
+        }
+        .link-line.active-torrent {
+            stroke: #10b981; /* Green */
+            stroke-width: 3.5px;
+            opacity: 0.95;
+            transition: none;
+        }
+
+        /* Packet Animations */
+        .msg-packet {
+            fill: var(--accent-cyan);
+            filter: drop-shadow(0 0 4px var(--accent-cyan));
+        }
+
+        .msg-label-float {
+            font-family: 'JetBrains Mono', monospace;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border-color);
+            padding: 0.8rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            display: none;
+            width: 220px;
+        }
+
+        .tooltip-title {
+            font-weight: 600;
+            color: var(--accent-cyan);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding-bottom: 0.3rem;
+            margin-bottom: 0.4rem;
+        }
+
+        .tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.2rem;
+        }
+
+        .tooltip-label { color: var(--text-muted); }
+        .tooltip-val { font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Header -->
+        <header>
+            <div class="logo">
+                <div class="logo-icon">DF</div>
+                <div class="logo-text">
+                    <h1>DistriFold</h1>
+                    <span>Visualizador de Rede & Treinamento</span>
+                </div>
+            </div>
+
+            <!-- Controles de Playback -->
+            <div class="controls-panel">
+                <div class="status-badge">
+                    <div id="status-dot" class="status-dot"></div>
+                    <span id="status-text">Desconectado</span>
+                    <span id="clock-text" style="margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text-muted); display: none;">[00:00:00.0]</span>
+                </div>
+
+                <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.1);"></div>
+
+                <button class="btn btn-primary" id="btn-play" title="Iniciar/Pausar Reprodução">
+                    <!-- Ícone Play (Padrão) -->
+                    <svg id="icon-play" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <!-- Ícone Pause -->
+                    <svg id="icon-pause" style="display:none;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                </button>
+
+                <button class="btn" id="btn-reset" title="Reiniciar Simulação">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+                </button>
+
+                <div class="speed-control">
+                    <span>Lento</span>
+                    <input type="range" id="speed-slider" min="50" max="1500" step="50" value="300" title="Velocidade da simulação">
+                    <span>Rápido</span>
+                    <span id="speed-val" style="margin-left: 8px; font-weight: 600; color: var(--accent-cyan); min-width: 45px;">1.0x</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="workspace">
+            <!-- Pane da Rede (SVG) -->
+            <div class="network-pane">
+                <svg id="graph-svg"></svg>
+                
+                <!-- Legenda do Grafo -->
+                <div class="legend-card">
+                    <div class="legend-title">Estados do Nó</div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(245, 158, 11, 0.2); border-color: var(--accent-amber);"></div>
+                        <span>Líder (Ativo)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(6, 182, 212, 0.2); border-color: var(--accent-cyan);"></div>
+                        <span>Trabalhador (Ativo)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(139, 92, 246, 0.2); border-color: var(--accent-purple);"></div>
+                        <span>Recuperando do crash</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(239, 68, 68, 0.15); border-color: var(--accent-red); border-style: dashed;"></div>
+                        <span>Morto (Timeout / Crash)</span>
+                    </div>
+                    <div class="legend-title" style="margin-top: 0.5rem;">Canais de Mensagens</div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-cyan); border-radius: 2px; height: 4px; width: 14px;"></div>
+                        <span>Heartbeat / PING / ACK</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-green); border-radius: 2px; height: 4px; width: 14px;"></div>
+                        <span>Torrenting P2P (Metadata/Chunks)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-amber); border-radius: 2px; height: 4px; width: 14px;"></div>
+                        <span>Fold Assign (Task) / Metrics Result</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Painel de Métricas Lateral -->
+            <div class="sidebar">
+                <!-- Visão Geral -->
+                <div class="panel-section">
+                    <div class="panel-title">Estado do Cluster</div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-label">Líder Atual</span>
+                            <span id="stat-leader" class="stat-val gold">-</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Nós Ativos</span>
+                            <span id="stat-nodes-active" class="stat-val cyan">0 / 0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Difusão P2P</span>
+                            <span id="stat-torrent" class="stat-val green">0%</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Folds Concluídos</span>
+                            <span id="stat-folds" class="stat-val">0 / 0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Progresso Folds -->
+                <div class="panel-section">
+                    <div class="panel-title">Treinamento Folds</div>
+                    <div class="fold-progress-bar">
+                        <div id="fold-progress-fill" class="fold-progress-fill"></div>
+                    </div>
+                    <table class="folds-table">
+                        <thead>
+                            <tr>
+                                <th>Fold</th>
+                                <th>Estado</th>
+                                <th>Acurácia</th>
+                                <th>F1-Score</th>
+                                <th>Loss</th>
+                            </tr>
+                        </thead>
+                        <tbody id="folds-tbody">
+                            <tr>
+                                <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1rem;">Nenhum fold registrado</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Eventos logs -->
+                <div class="panel-section" style="flex: 1; display: flex; flex-direction: column;">
+                    <div class="panel-title">Histórico de Comunicações</div>
+                    <div id="timeline" class="timeline-container">
+                        <!-- Itens dinâmicos -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Div Tooltip -->
+    <div id="node-tooltip" class="tooltip"></div>
+
+    <script>
+        // Configuração das Cores de Tags de MPI
+        const TAG_THEMES = {
+            "PING": { color: "#374151", class: "state", label: "Heartbeat PING" },
+            "ACK": { color: "#374151", class: "state", label: "Heartbeat ACK" },
+            "HELLO/PING": { color: "#374151", class: "state", label: "Heartbeat PING" },
+            "TASK_ASSIGN": { color: "#f59e0b", class: "train", label: "Atribuição de Fold" },
+            "RESULT": { color: "#10b981", class: "train", label: "Resultado de Treino" },
+            "STATE_SYNC": { color: "#8b5cf6", class: "state", label: "Sincronização de Estado" },
+            "TASK_CONFIG": { color: "#8b5cf6", class: "state", label: "Envio de Configuração" },
+            "TORRENT_META": { color: "#06b6d4", class: "torrent", label: "Torrent Metadados" },
+            "TORRENT_SEED": { color: "#06b6d4", class: "torrent", label: "Torrent Seed Inicial" },
+            "TORRENT_HAVE": { color: "#06b6d4", class: "torrent", label: "Torrent Have (Inventário)" },
+            "TORRENT_REQ": { color: "#10b981", class: "torrent", label: "Torrent Requisição de Chunk" },
+            "TORRENT_PIECE": { color: "#10b981", class: "torrent", label: "Torrent Piece" },
+            "NODE_READY": { color: "#10b981", class: "state", label: "Nó Dataset Pronto" },
+            "ELECTION_START": { color: "#ef4444", class: "election", label: "Início de Eleição" },
+            "ELECTION_RANK": { color: "#ef4444", class: "election", label: "Resposta Eleição Rank" },
+            "TORRENT_META_REQ": { color: "#06b6d4", class: "torrent", label: "Requisição Metadados" },
+            "LEADER_ANNOUNCE": { color: "#f59e0b", class: "election", label: "Anúncio do Novo Líder" },
+            "ELECTION_CONTEXT": { color: "#ef4444", class: "election", label: "Contexto para Eleição" },
+            "LEADER_QUERY": { color: "#f59e0b", class: "state", label: "Consulta de Líder" },
+            "LEADER_REPLY": { color: "#f59e0b", class: "state", label: "Resposta do Líder" },
+            "CONTEXT_REQ": { color: "#8b5cf6", class: "state", label: "Requisição de Contexto" },
+            "CONTEXT_RESP": { color: "#8b5cf6", class: "state", label: "Resposta de Contexto" }
+        };
+
+        // Mapeamento do slider para multiplicador de velocidade real-time
+        function getSpeedMultiplier(sliderVal) {
+            if (sliderVal <= 300) {
+                return 0.1 + (sliderVal - 50) * (0.9 / 250);
+            } else {
+                return 1.0 + (sliderVal - 300) * (29.0 / 1200);
+            }
+        }
+
+        // Atualização do Relógio da Simulação
+        function updateSimulationClock() {
+            if (state.currentTime === undefined || state.currentTime === 0) {
+                document.getElementById('clock-text').style.display = "none";
+                return;
+            }
+            document.getElementById('clock-text').style.display = "inline";
+            const date = new Date(state.currentTime * 1000);
+            const timeStr = date.toISOString().substr(11, 10); // "HH:MM:SS.m"
+            document.getElementById('clock-text').innerText = `[${timeStr}]`;
+        }
+
+        // Estado Geral da Simulação
+        const state = {
+            nodes: [],
+            links: [],
+            events: [],
+            currentEventIndex: 0,
+            isPlaying: false,
+            speedMultiplier: 1.0, // Multiplicador de velocidade em tempo real
+            currentTime: undefined, // Tempo atual da simulação
+            lastEventTime: 0,
+            leaderRank: null,
+            totalFolds: 8,
+            completedFolds: {},
+            nodeStatus: {}, // rank -> { role, state, progress, active_fold, metrics }
+            totalNodes: 0,
+            foldsChanged: true
+        };
+
+        // Elementos UI
+        const ui = {
+            btnPlay: document.getElementById('btn-play'),
+            btnReset: document.getElementById('btn-reset'),
+            speedSlider: document.getElementById('speed-slider'),
+            statusDot: document.getElementById('status-dot'),
+            statusText: document.getElementById('status-text'),
+            statLeader: document.getElementById('stat-leader'),
+            statNodesActive: document.getElementById('stat-nodes-active'),
+            statTorrent: document.getElementById('stat-torrent'),
+            statFolds: document.getElementById('stat-folds'),
+            foldProgressFill: document.getElementById('fold-progress-fill'),
+            foldsTbody: document.getElementById('folds-tbody'),
+            timeline: document.getElementById('timeline'),
+            tooltip: document.getElementById('node-tooltip'),
+            iconPlay: document.getElementById('icon-play'),
+            iconPause: document.getElementById('icon-pause')
+        };
+
+        // Inicializa o Canvas/SVG do Grafo D3
+        const svg = d3.select("#graph-svg");
+        const width = document.querySelector(".network-pane").clientWidth;
+        const height = document.querySelector(".network-pane").clientHeight;
+        svg.attr("viewBox", `0 0 ${width} ${height}`);
+
+        const gContainer = svg.append("g");
+
+        // Habilita Zoom & Pan
+        svg.call(d3.zoom().on("zoom", (e) => {
+            gContainer.attr("transform", e.transform);
+        }));
+
+        // Definição de marcadores para setas nas arestas
+        svg.append("defs").append("marker")
+            .attr("id", "arrow")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 26) // Afastamento do nó
+            .attr("refY", 0)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M0,-4L8,0L0,4")
+            .attr("fill", "rgba(255, 255, 255, 0.15)");
+
+        // Elementos D3
+        let d3Links = gContainer.append("g").selectAll(".link-line");
+        let d3Nodes = gContainer.append("g").selectAll(".node-group");
+
+        // Simulação de Força D3
+        const forceSim = d3.forceSimulation()
+            .force("link", d3.forceLink().id(d => d.id).distance(180))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collision", d3.forceCollide().radius(45))
+            .on("tick", ticked);
+
+        function ticked() {
+            d3Links
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            d3Nodes
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+
+        // Adiciona/Atualiza Nós no Grafo D3
+        // Helper para obter o ID de um nó de forma segura no D3 (seja objeto ou número)
+        const getLinkId = (node) => (node && typeof node === 'object') ? node.id : node;
+
+        function updateGraphLayout() {
+            // Arestas
+            d3Links = d3Links.data(state.links, d => `${getLinkId(d.source)}-${getLinkId(d.target)}`);
+            d3Links.exit().remove();
+            
+            const newLinks = d3Links.enter().append("line")
+                .attr("class", "link-line")
+                .attr("id", d => {
+                    const s = getLinkId(d.source);
+                    const t = getLinkId(d.target);
+                    return `link-${Math.min(s, t)}-${Math.max(s, t)}`;
+                })
+                .attr("marker-end", "url(#arrow)");
+            
+            d3Links = newLinks.merge(d3Links);
+
+            // Nós
+            d3Nodes = d3Nodes.data(state.nodes, d => d.id);
+            d3Nodes.exit().remove();
+
+            const newNodes = d3Nodes.enter().append("g")
+                .attr("class", "node-group")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended))
+                .on("mouseover", showTooltip)
+                .on("mouseout", hideTooltip);
+
+            // Círculo principal de fundo
+            newNodes.append("circle")
+                .attr("class", "node-circle-bg")
+                .attr("r", 25)
+                .attr("fill", "#0f172a")
+                .attr("stroke", "rgba(255, 255, 255, 0.1)")
+                .attr("stroke-width", 2);
+
+            // Anel externo de progresso de Torrenting
+            newNodes.append("circle")
+                .attr("class", "node-ring")
+                .attr("r", 25)
+                .attr("stroke-width", 3.5)
+                .attr("stroke", "var(--accent-green)");
+
+            // Borda do nó
+            newNodes.append("circle")
+                .attr("class", "node-circle")
+                .attr("r", 25)
+                .attr("fill", "transparent")
+                .attr("stroke-width", 2.5);
+
+            // Texto com ID do Rank
+            newNodes.append("text")
+                .attr("class", "node-label")
+                .text(d => d.id);
+
+            // Grupo de badge do fold de treinamento
+            const foldBadgeGroup = newNodes.append("g")
+                .attr("class", "node-fold-group")
+                .style("display", "none");
+
+            foldBadgeGroup.append("rect")
+                .attr("class", "node-fold-badge")
+                .attr("x", -25)
+                .attr("y", 30)
+                .attr("width", 50)
+                .attr("height", 14)
+                .attr("rx", 6)
+                .attr("ry", 6)
+                .attr("fill", "var(--accent-amber)")
+                .attr("opacity", 0.9);
+
+            foldBadgeGroup.append("text")
+                .attr("class", "node-fold-label")
+                .attr("x", 0)
+                .attr("y", 37)
+                .attr("fill", "#0f172a")
+                .attr("font-size", "9px")
+                .attr("font-weight", "700")
+                .attr("text-anchor", "middle")
+                .attr("dominant-baseline", "central")
+                .text("");
+
+            d3Nodes = newNodes.merge(d3Nodes);
+
+            // Vincula a simulação D3
+            forceSim.nodes(state.nodes);
+            forceSim.force("link").links(state.links);
+            forceSim.alpha(0.3).restart();
+        }
+
+        // Funções de Drag & Drop do Grafo D3
+        function dragstarted(event, d) {
+            if (!event.active) forceSim.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) forceSim.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        // Cria nós dinamicamente
+        function ensureNodeExists(rank) {
+            if (!state.nodeStatus[rank]) {
+                state.nodeStatus[rank] = {
+                    id: rank,
+                    role: "worker",
+                    state: "active",
+                    progress: 0,
+                    active_fold: null,
+                    metrics: []
+                };
+
+                const rx = width / 2 + (Math.random() - 0.5) * 100;
+                const ry = height / 2 + (Math.random() - 0.5) * 100;
+                state.nodes.push({ id: rank, x: rx, y: ry });
+                state.totalNodes = Math.max(state.totalNodes, rank + 1);
+                
+                // Conecta todos os nós dinamicamente em uma topologia em malha oculta
+                for (let i = 0; i < rank; i++) {
+                    state.links.push({ source: i, target: rank });
+                }
+
+                updateGraphLayout();
+            }
+            return state.nodeStatus[rank];
+        }
+
+        // Renderização dos Estados e Cores no Grafo
+        function renderNodeVisuals() {
+            d3Nodes.each(function(d) {
+                const nodeData = state.nodeStatus[d.id];
+                if (!nodeData) return;
+
+                const nodeGroup = d3.select(this);
+                const circle = nodeGroup.select(".node-circle");
+                const ring = nodeGroup.select(".node-ring");
+
+                // Configura as cores conforme papel e estado
+                let strokeColor = "var(--accent-cyan)";
+                let fillColor = "rgba(6, 182, 212, 0.15)";
+                let isDashed = false;
+                let isPulse = false;
+
+                if (nodeData.state === "dead") {
+                    strokeColor = "var(--accent-red)";
+                    fillColor = "rgba(239, 68, 68, 0.05)";
+                    isDashed = true;
+                } else if (nodeData.state === "recovering") {
+                    strokeColor = "var(--accent-purple)";
+                    fillColor = "rgba(139, 92, 246, 0.15)";
+                    isPulse = true;
+                } else if (nodeData.role === "leader" || nodeData.role === "leader_active") {
+                    strokeColor = "var(--accent-amber)";
+                    fillColor = "rgba(245, 158, 11, 0.25)";
+                    isPulse = true;
+                } else if (nodeData.state === "ready") {
+                    strokeColor = "var(--accent-green)";
+                    fillColor = "rgba(16, 185, 129, 0.15)";
+                }
+
+                circle
+                    .attr("stroke", strokeColor)
+                    .attr("fill", fillColor)
+                    .attr("stroke-dasharray", isDashed ? "4,4" : "none")
+                    .style("animation", isPulse ? "pulse 1.2s infinite alternate" : "none");
+
+                // Atualiza o progresso do Torrent no anel externo
+                // Perímetro = 2 * PI * r = 2 * 3.14159 * 25 = 157
+                const r = 25;
+                const circumference = 2 * Math.PI * r;
+                const offset = circumference - (nodeData.progress * circumference);
+                
+                ring
+                    .attr("stroke-dasharray", circumference)
+                    .attr("stroke-dashoffset", offset)
+                    .attr("opacity", nodeData.progress > 0 && nodeData.progress < 1 ? 1 : 0);
+
+                // Atualiza a label do fold de treinamento
+                const foldGroup = nodeGroup.select(".node-fold-group");
+                if (nodeData.active_fold !== null) {
+                    foldGroup.style("display", "block");
+                    foldGroup.select(".node-fold-label").text(`Fold ${nodeData.active_fold}`);
+                } else {
+                    foldGroup.style("display", "none");
+                }
+            });
+        }
+
+        // Animação de coloração das arestas (links) de acordo com o tipo de comunicação
+        function animateMessagePacket(fromId, toId, tag, dataSummary, evtTime) {
+            // Seleciona classe conforme a TAG
+            const tagInfo = TAG_THEMES[tag] || { color: "var(--accent-cyan)", class: "state" };
+            const className = "active-" + (tagInfo.class || "state");
+
+            // Chave de deduplicação para evitar disparar transições redundantes no mesmo link
+            if (evtTime !== undefined) {
+                const roundedTime = Math.round(evtTime * 2); // Janelas de 500ms
+                const dedupKey = `${Math.min(fromId, toId)}-${Math.max(fromId, toId)}-${tag}-${roundedTime}`;
+                if (!state.activeAnimations) state.activeAnimations = new Set();
+                if (state.activeAnimations.has(dedupKey)) {
+                    return;
+                }
+                state.activeAnimations.add(dedupKey);
+                setTimeout(() => {
+                    if (state.activeAnimations) state.activeAnimations.delete(dedupKey);
+                }, 2000);
+            }
+
+            const linkEl = document.getElementById(`link-${Math.min(fromId, toId)}-${Math.max(fromId, toId)}`);
+            if (linkEl) {
+                // Acende imediatamente adicionando a classe
+                linkEl.classList.add(className);
+
+                // Cancela o timeout anterior para evitar conflitos se houver novos eventos
+                if (linkEl._timeout) {
+                    clearTimeout(linkEl._timeout);
+                }
+
+                // Desliga após 100ms, deixando o CSS fazer o fadeout lento e suave de 2 segundos
+                linkEl._timeout = setTimeout(() => {
+                    linkEl.classList.remove(className);
+                    linkEl._timeout = null;
+                }, 100);
+            }
+        }
+
+        // Exibe Informações do Nó (Tooltip)
+        function showTooltip(event, d) {
+            const nodeData = state.nodeStatus[d.id];
+            if (!nodeData) return;
+
+            const rect = event.currentTarget.getBoundingClientRect();
+            const parentRect = document.querySelector(".network-pane").getBoundingClientRect();
+            
+            ui.tooltip.style.left = `${rect.left - parentRect.left + 35}px`;
+            ui.tooltip.style.top = `${rect.top - parentRect.top}px`;
+            ui.tooltip.style.display = "block";
+
+            let foldText = "Inativo";
+            if (nodeData.active_fold !== null) {
+                foldText = `Treinando Fold ${nodeData.active_fold}`;
+            }
+
+            let statusColor = "var(--accent-green)";
+            if (nodeData.state === "dead") statusColor = "var(--accent-red)";
+            else if (nodeData.state === "recovering") statusColor = "var(--accent-purple)";
+
+            ui.tooltip.innerHTML = `
+                <div class="tooltip-title">Nó Rank ${d.id}</div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">Papel:</span>
+                    <span class="tooltip-val" style="color: ${nodeData.role === 'leader' ? 'var(--accent-amber)' : 'var(--accent-cyan)'}">${nodeData.role.toUpperCase()}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">Estado:</span>
+                    <span class="tooltip-val" style="color: ${statusColor}">${nodeData.state.toUpperCase()}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">Dataset P2P:</span>
+                    <span class="tooltip-val">${(nodeData.progress * 100).toFixed(0)}%</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">Tarefa atual:</span>
+                    <span class="tooltip-val">${foldText}</span>
+                </div>
+            `;
+        }
+
+        function hideTooltip() {
+            ui.tooltip.style.display = "none";
+        }
+
+        // Trata e aplica um Evento na Simulação
+        function applyEvent(evt) {
+            const { type, rank } = evt;
+            ensureNodeExists(rank);
+            const node = state.nodeStatus[rank];
+
+            let timelineDesc = "";
+            let timelineClass = "state";
+
+            if (type === "msg_sent") {
+                const { dest, tag_name, data_summary } = evt;
+                ensureNodeExists(dest);
+                animateMessagePacket(rank, dest, tag_name, data_summary, evt.time);
+                timelineDesc = `Nó ${rank} ➔ Nó ${dest} : ${tag_name}${data_summary ? ' (' + data_summary.substring(0, 25) + ')' : ''}`;
+                timelineClass = "msg";
+            } 
+            else if (type === "msg_received") {
+                const { src, tag_name, data_summary } = evt;
+                ensureNodeExists(src);
+                animateMessagePacket(src, rank, tag_name, data_summary, evt.time);
+                timelineDesc = `Nó ${rank} 🭬 Nó ${src} : ${tag_name}${data_summary ? ' (' + data_summary.substring(0, 25) + ')' : ''}`;
+                timelineClass = "msg";
+            } 
+            else if (type === "node_state") {
+                node.state = evt.state;
+                if (evt.state === "leader_active") {
+                    node.role = "leader";
+                    state.leaderRank = rank;
+                }
+                timelineDesc = `Nó ${rank} mudou estado para: ${evt.state}`;
+                timelineClass = "state";
+            } 
+            else if (type === "election_start") {
+                node.state = "recovering";
+                node.role = "worker";
+                timelineDesc = `Nó ${rank} iniciou processo de eleição`;
+                timelineClass = "election";
+            } 
+            else if (type === "leader_elected") {
+                const { leader } = evt;
+                ensureNodeExists(leader);
+                state.leaderRank = leader;
+                state.nodeStatus[leader].role = "leader";
+                
+                // Os outros voltam a ser worker
+                state.nodes.forEach(n => {
+                    if (n.id !== leader) {
+                        state.nodeStatus[n.id].role = "worker";
+                    }
+                });
+
+                timelineDesc = `Nó ${rank} reconheceu novo líder: Nó ${leader}`;
+                timelineClass = "election";
+            } 
+            else if (type === "torrent_init") {
+                state.totalFolds = evt.total_chunks;
+                state.foldsChanged = true;
+                node.progress = 1.0; // Líder já tem tudo
+                timelineDesc = `Líder ${rank} particionou dataset em ${evt.total_chunks} pedaços`;
+                timelineClass = "torrent";
+            } 
+            else if (type === "torrent_have") {
+                const { have } = evt;
+                const count = have.filter(x => x).length;
+                node.progress = count / have.length;
+                timelineDesc = `Nó ${rank} possui ${count}/${have.length} pedaços do dataset`;
+                timelineClass = "torrent";
+            } 
+            else if (type === "torrent_piece_received") {
+                const { chunk_id, src } = evt;
+                timelineDesc = `Nó ${rank} recebeu pedaço ${chunk_id} do Nó ${src}`;
+                timelineClass = "torrent";
+            } 
+            else if (type === "train_start") {
+                const { fold_id } = evt;
+                node.active_fold = fold_id;
+                
+                // Registra fold na tabela
+                if (fold_id >= 0) {
+                    state.completedFolds[fold_id] = { state: "training", acc: "-", f1: "-", loss: "-" };
+                    state.foldsChanged = true;
+                }
+
+                timelineDesc = `Nó ${rank} iniciou treinamento do Fold ${fold_id}`;
+                timelineClass = "train";
+            } 
+            else if (type === "train_complete") {
+                const { fold_id, metrics } = evt;
+                node.active_fold = null;
+                
+                if (fold_id >= 0 && metrics) {
+                    state.completedFolds[fold_id] = {
+                        state: "completed",
+                        acc: metrics.accuracy.toFixed(4),
+                        f1: metrics.f1.toFixed(4),
+                        loss: metrics.loss.toFixed(4)
+                    };
+                    state.foldsChanged = true;
+                }
+
+                timelineDesc = `Nó ${rank} concluiu Fold ${fold_id} (Acc: ${metrics?.accuracy.toFixed(4)})`;
+                timelineClass = "train";
+            } 
+            else if (type === "node_timeout") {
+                const { subject } = evt;
+                ensureNodeExists(subject);
+                state.nodeStatus[subject].state = "dead";
+                state.nodeStatus[subject].active_fold = null;
+                timelineDesc = `Líder detectou queda do Nó ${subject}`;
+                timelineClass = "election";
+            } 
+            else if (type === "node_alive" || type === "node_ready") {
+                const { subject } = evt;
+                ensureNodeExists(subject);
+                state.nodeStatus[subject].state = (type === "node_ready") ? "ready" : "active";
+                timelineDesc = `Líder registrou Nó ${subject} como ${(type === "node_ready") ? 'pronto' : 'ativo'}`;
+                timelineClass = "state";
+            }
+
+            // Atualiza Visuais
+            renderNodeVisuals();
+            updateWidgets();
+
+            // Adiciona na timeline (se não for muito repetitivo para não poluir)
+            let shouldLogTimeline = true;
+            
+            // Filtra ruído de rede/transporte de baixíssimo nível da timeline textual
+            if (type === "torrent_piece_received") {
+                shouldLogTimeline = false;
+            } else if (timelineClass === "msg" || timelineClass === "state") {
+                const tag = evt.tag_name;
+                if (tag === "PING" || tag === "ACK" || tag === "TORRENT_REQ" || tag === "TORRENT_PIECE" || tag === "TORRENT_HAVE" || tag === "TORRENT_META_REQ" || tag === "LEADER_QUERY" || tag === "LEADER_REPLY") {
+                    shouldLogTimeline = false;
+                }
+            } else if (timelineClass === "torrent" && type === "torrent_have") {
+                // Limita taxa dos logs de progresso do torrent a cada 4 segundos por nó
+                const key = `${rank}-torrent-have`;
+                if (!state.lastTimelineTimes) state.lastTimelineTimes = {};
+                if (state.lastTimelineTimes[key] && (evt.time - state.lastTimelineTimes[key] < 4.0)) {
+                    shouldLogTimeline = false;
+                } else {
+                    state.lastTimelineTimes[key] = evt.time;
+                }
+            }
+
+            if (shouldLogTimeline) {
+                addTimelineItem(evt.time, timelineClass, timelineDesc);
+            }
+        }
+
+        // Adiciona um item na lista de Timeline
+        function addTimelineItem(timeVal, typeClass, desc) {
+            const timeStr = new Date(timeVal * 1000).toISOString().substr(11, 12);
+            
+            const item = document.createElement("div");
+            item.className = `timeline-item ${typeClass}`;
+            item.innerHTML = `
+                <div class="timeline-meta">
+                    <span>[${timeStr}]</span>
+                    <span>${typeClass.toUpperCase()}</span>
+                </div>
+                <div class="timeline-desc">${desc}</div>
+            `;
+            
+            ui.timeline.appendChild(item);
+            ui.timeline.scrollTop = ui.timeline.scrollHeight;
+        }
+
+        // Atualiza os Widgets de Informações Laterais
+        function updateWidgets() {
+            // Líder
+            ui.statLeader.innerText = state.leaderRank !== null ? `Nó ${state.leaderRank}` : "-";
+
+            // Ativos
+            const total = Object.keys(state.nodeStatus).length;
+            const active = Object.values(state.nodeStatus).filter(n => n.state !== "dead").length;
+            ui.statNodesActive.innerText = `${active} / ${total}`;
+
+            // Difusão Dataset (Média dos progressos)
+            if (total > 0) {
+                const sumProg = Object.values(state.nodeStatus).reduce((a, b) => a + b.progress, 0);
+                const avgProg = (sumProg / total) * 100;
+                ui.statTorrent.innerText = `${avgProg.toFixed(0)}%`;
+                ui.statTorrent.className = `stat-val ${avgProg === 100 ? 'green' : 'cyan'}`;
+            }
+
+            // Folds completos
+            const completedCount = Object.values(state.completedFolds).filter(f => f.state === "completed").length;
+            ui.statFolds.innerText = `${completedCount} / ${state.totalFolds}`;
+
+            // Barra de Progresso
+            const progPercent = state.totalFolds > 0 ? (completedCount / state.totalFolds) * 100 : 0;
+            ui.foldProgressFill.style.width = `${progPercent}%`;
+
+            // Tabela de Folds - Reconstrói apenas se houver mudanças nos folds
+            if (state.foldsChanged) {
+                let tbodyHtml = "";
+                if (Object.keys(state.completedFolds).length === 0) {
+                    tbodyHtml = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1rem;">Nenhum fold registrado</td></tr>`;
+                } else {
+                    for (let i = 0; i < state.totalFolds; i++) {
+                        const fold = state.completedFolds[i] || { state: "pending", acc: "-", f1: "-", loss: "-" };
+                        let badgeClass = "badge-pending";
+                        let stateLabel = "Pendente";
+                        if (fold.state === "training") {
+                            badgeClass = "badge-role badge-training";
+                            stateLabel = "Treinando";
+                        } else if (fold.state === "completed") {
+                            badgeClass = "badge-role badge-completed";
+                            stateLabel = "Concluído";
+                        }
+
+                        tbodyHtml += `
+                            <tr>
+                                <td><strong>Fold ${i}</strong></td>
+                                <td><span class="badge ${badgeClass}">${stateLabel}</span></td>
+                                <td>${fold.acc}</td>
+                                <td>${fold.f1}</td>
+                                <td>${fold.loss}</td>
+                            </tr>
+                        `;
+                    }
+                }
+                ui.foldsTbody.innerHTML = tbodyHtml;
+                state.foldsChanged = false;
+            }
+        }
+
+        let lastTickTime = null;
+
+        // Loop de Simulação de Playback indexada no tempo real dos eventos
+        function simulationTick() {
+            if (!state.isPlaying) return;
+
+            // Inicializa o currentTime caso esteja nulo ou resetado
+            if (state.currentTime === undefined || state.currentTime === 0) {
+                if (state.events.length > 0) {
+                    state.currentTime = state.events[0].time - 0.1;
+                } else {
+                    state.currentTime = 0;
+                }
+            }
+
+            const now = performance.now();
+            if (lastTickTime === null) {
+                lastTickTime = now;
+            }
+            const deltaRealSeconds = (now - lastTickTime) / 1000;
+            lastTickTime = now;
+
+            // Avança o relógio da simulação baseado no tempo real decorrido e no multiplicador de velocidade
+            const simDelta = deltaRealSeconds * state.speedMultiplier;
+            state.currentTime += simDelta;
+
+            // Processa TODOS os eventos que ocorreram até o currentTime
+            let anyEventApplied = false;
+            while (state.currentEventIndex < state.events.length) {
+                const nextEvt = state.events[state.currentEventIndex];
+                if (nextEvt.time <= state.currentTime) {
+                    try {
+                        applyEvent(nextEvt);
+                        anyEventApplied = true;
+                    } catch (err) {
+                        console.error("Erro ao aplicar evento:", err, nextEvt);
+                    }
+                    state.currentEventIndex++;
+                } else {
+                    break;
+                }
+            }
+
+            if (anyEventApplied) {
+                renderNodeVisuals();
+                updateWidgets();
+            }
+
+            updateSimulationClock();
+
+            if (state.currentEventIndex < state.events.length) {
+                requestAnimationFrame(simulationTick);
+            } else {
+                state.isPlaying = false;
+                updatePlaybackControls();
+            }
+        }
+
+        // Atualiza os Ícones e Estados dos Botões
+        function updatePlaybackControls() {
+            if (state.isPlaying) {
+                ui.iconPlay.style.display = "none";
+                ui.iconPause.style.display = "block";
+                ui.statusDot.className = "status-dot active";
+                ui.statusText.innerText = "Reproduzindo";
+            } else {
+                ui.iconPlay.style.display = "block";
+                ui.iconPause.style.display = "none";
+                ui.statusDot.className = "status-dot";
+                ui.statusText.innerText = "Pausado / Concluído";
+            }
+        }
+
+        // Reseta o Estado Geral
+        function resetSimulation() {
+            state.isPlaying = false;
+            state.currentEventIndex = 0;
+            state.currentTime = undefined;
+            state.nodes = [];
+            state.links = [];
+            state.completedFolds = {};
+            state.nodeStatus = {};
+            state.leaderRank = null;
+            state.totalNodes = 0;
+            state.foldsChanged = true;
+            ui.timeline.innerHTML = "";
+            
+            updateGraphLayout();
+            renderNodeVisuals();
+            updateWidgets();
+            updatePlaybackControls();
+            updateSimulationClock();
+        }
+
+        // Event Listeners
+        ui.btnPlay.addEventListener('click', () => {
+            state.isPlaying = !state.isPlaying;
+            updatePlaybackControls();
+            if (state.isPlaying) {
+                lastTickTime = performance.now();
+                simulationTick();
+            }
+        });
+
+        ui.btnReset.addEventListener('click', () => {
+            resetSimulation();
+        });
+
+        ui.speedSlider.addEventListener('input', (e) => {
+            const sliderVal = parseInt(e.target.value);
+            state.speedMultiplier = getSpeedMultiplier(sliderVal);
+            document.getElementById('speed-val').innerText = `${state.speedMultiplier.toFixed(1)}x`;
+        });
+
+        // Polling de eventos do Servidor
+        async function fetchEvents() {
+            try {
+                const response = await fetch(`/api/events?since=${state.lastEventTime}`);
+                if (!response.ok) throw new Error("Erro na rede");
+                const data = await response.json();
+
+                if (data.events && data.events.length > 0) {
+                    // Adiciona novos eventos
+                    const oldLen = state.events.length;
+                    
+                    // Ordena e evita duplicatas por timestamp, tipo e rank
+                    const seen = new Set();
+                    const merged = [];
+                    for (const evt of [...state.events, ...data.events]) {
+                        const key = `${evt.time}-${evt.type}-${evt.rank || 0}-${evt.dest || evt.src || 0}`;
+                        if (!seen.has(key)) {
+                            seen.add(key);
+                            merged.push(evt);
+                        }
+                    }
+                    merged.sort((a, b) => a.time - b.time);
+                    
+                    state.events = merged;
+
+                    // Atualiza a marcação de tempo do último evento
+                    const lastEvt = data.events[data.events.length - 1];
+                    state.lastEventTime = lastEvt.time;
+
+                    // Exibe status ativo
+                    ui.statusDot.className = "status-dot active";
+                    ui.statusText.innerText = "Conectado (Eventos carregados)";
+
+                    // Se não estivesse reproduzindo e estivesse no final, reinicia a reprodução
+                    if (!state.isPlaying && state.currentEventIndex >= oldLen) {
+                        state.isPlaying = true;
+                        updatePlaybackControls();
+                        lastTickTime = performance.now();
+                        simulationTick();
+                    }
+                }
+            } catch (err) {
+                console.error("Erro ao buscar eventos:", err);
+                ui.statusDot.className = "status-dot";
+                ui.statusDot.style.backgroundColor = "var(--accent-red)";
+                ui.statusText.innerText = "Erro de conexão";
+            }
+        }
+
+        // Inicialização
+        resetSimulation();
+        
+        // Ajusta a velocidade inicial do multiplicador
+        state.speedMultiplier = getSpeedMultiplier(parseInt(ui.speedSlider.value));
+        document.getElementById('speed-val').innerText = `${state.speedMultiplier.toFixed(1)}x`;
+
+        // Busca imediata e polling regular
+        fetchEvents();
+        setInterval(fetchEvents, 2000);
+    </script>
+</body>
+</html>

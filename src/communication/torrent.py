@@ -58,6 +58,11 @@ class TorrentEngine:
         for i in range(self.total_chunks):
             self.chunks[i] = (X_splits[i], y_splits[i])
         print(f"[Torrent Líder] Dataset particionado em {self.total_chunks} chunks.")
+        try:
+            self.connector.vis_logger.log_event("torrent_init", total_chunks=self.total_chunks)
+            self.connector.vis_logger.log_event("torrent_have", have=self.have)
+        except Exception:
+            pass
         
         
 
@@ -130,6 +135,10 @@ class TorrentEngine:
 
             self.have = [True] * self.total_chunks
             self.peer_haves[self.context.rank] = self.have
+            try:
+                self.connector.vis_logger.log_event("torrent_have", have=self.have)
+            except Exception:
+                pass
 
             #inicia swarm loop como seed
             
@@ -178,6 +187,11 @@ class TorrentEngine:
         self.have[chunk_id] = True
         self.peer_haves[self.context.rank] = self.have
         print(f"[Worker {self.context.rank}] Recebi meu chunk inicial {chunk_id} do Líder.")
+        try:
+            self.connector.vis_logger.log_event("torrent_piece_received", chunk_id=chunk_id, src=self.context.leader_rank)
+            self.connector.vis_logger.log_event("torrent_have", have=self.have)
+        except Exception:
+            pass
 
         #entra no loop de ficar trocando, mesmo se completar
         
@@ -281,6 +295,11 @@ class TorrentEngine:
                     self.have[chunk_id] = True
                     self.peer_haves[self.context.rank] = self.have  # Atualiza o meu registro na tabela
                     print(f"[Nó {self.context.rank}] Recebi e salvei Chunk {chunk_id} do Nó {source}! Novo HAVE: {self.have}")
+                    try:
+                        self.connector.vis_logger.log_event("torrent_piece_received", chunk_id=chunk_id, src=source)
+                        self.connector.vis_logger.log_event("torrent_have", have=self.have)
+                    except Exception:
+                        pass
             
             # Limpa requisições enviadas concluídas para evitar vazamento de recursos
             self.active_requests = [req for req in self.active_requests if not req.Test()]
