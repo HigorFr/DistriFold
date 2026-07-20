@@ -294,7 +294,7 @@ class TorrentEngine:
                     self.chunks[chunk_id] = chunk_data
                     self.have[chunk_id] = True
                     self.peer_haves[self.context.rank] = self.have  # Atualiza o meu registro na tabela
-                    print(f"[Nó {self.context.rank}] Recebi e salvei Chunk {chunk_id} do Nó {source}! Novo HAVE: {self.have}")
+                    debug(f"[Nó {self.context.rank}] Recebi e salvei Chunk {chunk_id} do Nó {source}! Have: {sum(self.have)}/{len(self.have)}")
                     try:
                         self.connector.vis_logger.log_event("torrent_piece_received", chunk_id=chunk_id, src=source)
                         self.connector.vis_logger.log_event("torrent_have", have=self.have)

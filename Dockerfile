@@ -9,8 +9,9 @@ FROM python:3.11-slim AS base
 LABEL maintainer="DistriFold Team"
 LABEL description="Distributed K-Fold Cross-Validation training with OpenMPI"
 
-# Evita prompts interativos na instalação de pacotes
+# Evita prompts interativos na instalação de pacotes e força flush imediato de logs Python
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
 
 # ------------------------------------------------------------
 # 1. Instala dependências de sistema (OpenMPI + build tools)
@@ -78,5 +79,9 @@ EXPOSE 8000
 # ------------------------------------------------------------
 # 8. Entrypoint padrão
 # ------------------------------------------------------------
-# Usa shell form para expandir $NUM_NODES
-CMD mpiexec --allow-run-as-root -n $NUM_NODES python -B src/MPI_start.py
+# Usa shell form para expandir $NUM_NODES e limpa sessões residuais do OpenMPI/PRTE em /tmp
+# Também limpa logs de execuções anteriores (mantém datasets .npz intactos)
+CMD rm -rf /tmp/prte* /tmp/openmpi* 2>/dev/null; \
+    find /app/src/Locals -name "visual_events.jsonl" -delete 2>/dev/null; \
+    find /app/src/Locals -name "*.txt" -delete 2>/dev/null; \
+    mpiexec --allow-run-as-root -n $NUM_NODES python -B src/MPI_start.py

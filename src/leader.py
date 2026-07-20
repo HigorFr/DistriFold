@@ -1,6 +1,7 @@
 from sklearn.datasets import fetch_covtype
 import time
 import threading
+import sys
 from logger import info as print, debug, warn
 import numpy as np
 from sklearn.model_selection import KFold
@@ -153,80 +154,6 @@ class LeaderWork:
 
 
 
-            with self.context.lock:
-                completed_count = len(self.context.leader_context["completed_folds"])
-            
-            if completed_count >= self.num_folds:
-                break
-
-            if self.context.stop_event.is_set():
-                break
-
-            #Atribui folds livres a workers livres
-            with self.context.lock:
-                ctx = self.context.leader_context
-                pending_folds = ctx["pending_folds"]
-                active_assignments = ctx["active_assignments"]
-                completed_folds = ctx["completed_folds"]
-                
-                for worker_rank in ctx["ready_nodes"]:
-                    if worker_rank == self.context.leader_rank:
-                        continue
-                    
-                    if worker_rank not in active_assignments and len(pending_folds) > 0:
-                        fold_id = pending_folds.pop(0)
-                        active_assignments[worker_rank] = fold_id
-                        ctx["epoch"] += 1
-                        self.context.context_dirty = True
-                        
-
-                        config = {'MLP': self.MLP_Config,
-                                'FOLD': self.FOLD_Config
-                        }
-
-                        task = {
-                            "fold_id": fold_id,
-                            "config": config
-                        }
-
-                        # Envia a tarefa (apenas o fold_id)
-                        if self.comm_service:
-                            debug(f'pending_folds: {pending_folds}')
-                            self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task)
-                        
-                        print(f"[Líder {self.context.rank}] Atribuiu Fold {fold_id} para o Worker {worker_rank}")
-
-                # Treino local do líder: se não está treinando e há folds pendentes
-                leader_idle = (self._local_train_thread is None or not self._local_train_thread.is_alive())
-                
-                can_leader_train = True
-                if not self.allow_early_training and self.context.size > 1:
-                    # Se treino precoce não for permitido, todos os workers ativos/vivos devem estar prontos (ready_nodes)
-                    alive_workers = [w for w in ctx["alive_nodes"] if w != self.context.rank]
-                    ready_workers = [w for w in ctx["ready_nodes"] if w != self.context.rank]
-                    if len(alive_workers) == 0 or not all(w in ready_workers for w in alive_workers):
-                        can_leader_train = False
-
-                if leader_idle and len(pending_folds) > 0 and can_leader_train:
-                    fold_id = pending_folds.pop(0)
-                    active_assignments[self.context.rank] = fold_id
-                    ctx["epoch"] += 1
-                    self.context.context_dirty = True
-
-                    print(f"[Líder {self.context.rank}] Treinando Fold {fold_id} localmente...")
-                    try:
-                        self.connector.vis_logger.log_event("train_start", fold_id=fold_id)
-                    except Exception:
-                        pass
-                    self._local_train_thread = threading.Thread(
-                        target=self._train_fold_locally,
-                        args=(X, y, fold_id),
-                        daemon=True
-                    )
-                    self._local_train_thread.start()
-
-
-
             #Coleta resultados dos workers (não-bloqueante)
             for worker_rank in range(self.context.size):
                 if worker_rank == self.context.leader_rank:
@@ -248,7 +175,6 @@ class LeaderWork:
                             del ctx["active_assignments"][worker_rank]
                         if fold_id in ctx["pending_folds"]:
                             ctx["pending_folds"].remove(fold_id)
-
 
                         ctx["epoch"] += 1
                         self.context.context_dirty = True
@@ -273,6 +199,72 @@ class LeaderWork:
                         self.context.context_dirty = True
                 print(f"[Líder {self.context.rank}] Sucesso! Concluiu treino local do Fold {fold_id}")
 
+            # --- Verifica conclusão APÓS coletar resultados ---
+            with self.context.lock:
+                completed_count = len(self.context.leader_context["completed_folds"])
+
+            if completed_count >= self.num_folds:
+                sys.stdout.write(f"\n[Líder {self.context.rank}] TODOS OS {completed_count} FOLDS CONCLUÍDOS! Calculando métricas finais...\n")
+                sys.stdout.flush()
+                break
+
+            if self.context.stop_event.is_set():
+                break
+
+            #Atribui folds livres a workers livres
+            with self.context.lock:
+                ctx = self.context.leader_context
+                pending_folds = ctx["pending_folds"]
+                active_assignments = ctx["active_assignments"]
+                completed_folds = ctx["completed_folds"]
+
+                for worker_rank in ctx["ready_nodes"]:
+                    if worker_rank == self.context.leader_rank:
+                        continue
+
+                    if worker_rank not in active_assignments and len(pending_folds) > 0:
+                        fold_id = pending_folds.pop(0)
+                        active_assignments[worker_rank] = fold_id
+                        ctx["epoch"] += 1
+                        self.context.context_dirty = True
+
+                        config = {'MLP': self.MLP_Config, 'FOLD': self.FOLD_Config}
+                        task = {"fold_id": fold_id, "config": config}
+
+                        if self.comm_service:
+                            debug(f'pending_folds: {pending_folds}')
+                            self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task)
+
+                        print(f"[Líder {self.context.rank}] Atribuiu Fold {fold_id} para o Worker {worker_rank}")
+
+                # Treino local do líder
+                leader_idle = (self._local_train_thread is None or not self._local_train_thread.is_alive())
+
+                can_leader_train = True
+                if not self.allow_early_training and self.context.size > 1:
+                    alive_workers = [w for w in ctx["alive_nodes"] if w != self.context.rank]
+                    ready_workers = [w for w in ctx["ready_nodes"] if w != self.context.rank]
+                    if len(alive_workers) == 0 or not all(w in ready_workers for w in alive_workers):
+                        can_leader_train = False
+
+                if leader_idle and len(pending_folds) > 0 and can_leader_train:
+                    fold_id = pending_folds.pop(0)
+                    active_assignments[self.context.rank] = fold_id
+                    ctx["epoch"] += 1
+                    self.context.context_dirty = True
+
+                    print(f"[Líder {self.context.rank}] Treinando Fold {fold_id} localmente...")
+                    try:
+                        self.connector.vis_logger.log_event("train_start", fold_id=fold_id)
+                    except Exception:
+                        pass
+                    self._local_train_thread = threading.Thread(
+                        target=self._train_fold_locally,
+                        args=(X, y, fold_id),
+                        daemon=True
+                    )
+                    self._local_train_thread.start()
+
             time.sleep(0.1)
 
 
@@ -288,31 +280,51 @@ class LeaderWork:
         losses = [met["loss"] for met in completed_folds.values()]
 
                 
-        #Saída final
+        # Saída final
         print('Final:')
         for f, met in sorted(completed_folds.items()):
             print(f"Fold {f}: Acurácia = {met['accuracy']:.4f} | F1-Score = {met['f1']:.4f} | Loss = {met['loss']:.4f}")
     
-        print(f"Acurácia Média : {np.mean(accuracies):.4f} ± {np.std(accuracies):.4f}")
-        print(f"F1-Score Médio : {np.mean(f1s):.4f} ± {np.std(f1s):.4f}")
-        print(f"Loss Média     : {np.mean(losses):.4f} ± {np.std(losses):.4f}")
+        mean_acc = float(np.mean(accuracies))
+        std_acc = float(np.std(accuracies))
+        mean_f1_val = float(np.mean(f1s))
+        std_f1_val = float(np.std(f1s))
+        mean_loss_val = float(np.mean(losses))
+        std_loss_val = float(np.std(losses))
+
+        print(f"Acurácia Média : {mean_acc:.4f} ± {std_acc:.4f}")
+        print(f"F1-Score Médio : {mean_f1_val:.4f} ± {std_f1_val:.4f}")
+        print(f"Loss Média     : {mean_loss_val:.4f} ± {std_loss_val:.4f}")
+        sys.stdout.flush()
+
+        try:
+            self.connector.vis_logger.log_event(
+                "training_finished",
+                mean_accuracy=mean_acc,
+                std_accuracy=std_acc,
+                mean_f1=mean_f1_val,
+                std_f1=std_f1_val,
+                mean_loss=mean_loss_val,
+                std_loss=std_loss_val,
+                total_folds=len(completed_folds)
+            )
+        except Exception:
+            pass
         
 
-        #Manda workers encerrarem
+        # Manda workers encerrarem — reenvia para nós que ainda não responderam (ciclo crash/recovery)
         print("[Líder] Enviando sinal de encerramento para os workers...")
-        for worker_rank in range(self.context.size):
-            if worker_rank != self.context.leader_rank:
+        sys.stdout.flush()
 
-                task = {
-                    "fold_id": -1,
-                    "config": None
-                }
+        task_terminate = {"fold_id": -1, "config": None}
+        workers_to_terminate = set(range(self.context.size)) - {self.context.leader_rank}
+        deadline = time.time() + 30.0  # Timeout máximo de 30s para encerramento
 
+        while workers_to_terminate and time.time() < deadline:
+            for worker_rank in list(workers_to_terminate):
                 if self.comm_service:
-                    self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task)
-
-        # Aguarda o flush dos sinais de encerramento pela thread de comunicação
-        time.sleep(2.0)
+                    self.comm_service.enqueue("leader", dest=worker_rank, tag=TAG_TASK, payload=task_terminate)
+            time.sleep(1.5)
 
         # Encerra o líder
         self.context.stop_event.set()

@@ -151,7 +151,6 @@ O comportamento do sistema pode ser customizado via variáveis de ambiente ou ed
 | `DISTRIFOLD_N_SPLITS` | `64` | Quantidade de folds na divisão do K-Fold Cross Validation |
 | `DISTRIFOLD_EPOCHS` | `600` | Número máximo de épocas de treinamento da MLP por fold |
 | `ALLOW_LEADER_EARLY_TRAINING` | `False` | Se `True`, o líder treina localmente sem esperar que os workers fiquem prontos |
-| `DISTRIFOLD_BENCHMARK` | `False` | Se `True`, desativa a injeção simulada de falhas para medições puras de performance |
 
 ### Exemplos de Execução com Parâmetros Customizados
 

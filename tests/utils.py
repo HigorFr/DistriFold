@@ -8,6 +8,19 @@ TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(TESTS_DIR)
 LOCALS_DIR = os.path.join(PROJECT_ROOT, "src", "Locals")
 
+def ensure_dataset():
+    rank0_dir = os.path.join(LOCALS_DIR, "Rank 0")
+    os.makedirs(rank0_dir, exist_ok=True)
+    npz_path = os.path.join(rank0_dir, "breast_cancer.npz")
+    if not os.path.exists(npz_path):
+        try:
+            from sklearn.datasets import load_breast_cancer
+            import numpy as np
+            data = load_breast_cancer()
+            np.savez(npz_path, X=data.data, y=data.target)
+        except Exception as e:
+            print(f"[Dataset] Erro ao criar dataset inicial: {e}")
+
 def clear_locals():
     """Limpa a pasta Locals para simular nós novos zerados.
     Mantém apenas o arquivo NPZ no Rank 0 para iniciar o seed.
@@ -31,6 +44,16 @@ def clear_locals():
                                 os.remove(file_path)
                         except Exception:
                             pass
+    import glob
+    for p in glob.glob("/tmp/prte*") + glob.glob("/tmp/openmpi*") + glob.glob("/tmp/ompi*"):
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                os.remove(p)
+        except Exception:
+            pass
+    ensure_dataset()
 
 def run_mpi(scenario_name, num_nodes=3, env_overrides=None, timeout=25):
     """Executa o script test_MPI_start.py com o cenário de testes especificado."""
@@ -44,7 +67,7 @@ def run_mpi(scenario_name, num_nodes=3, env_overrides=None, timeout=25):
         for k, v in env_overrides.items():
             env[k] = str(v)
             
-    mpi_cmd = ["mpiexec", "-n", str(num_nodes), sys.executable, "-B", "tests/test_MPI_start.py"]
+    mpi_cmd = ["mpiexec", "--allow-run-as-root", "-n", str(num_nodes), sys.executable, "-B", "tests/test_MPI_start.py"]
     
     print(f"\n[Test Runner] Executando: {' '.join(mpi_cmd)} (Cenário: {scenario_name})")
     
@@ -85,7 +108,8 @@ def get_node_logs(rank):
 def search_log(rank, keyword):
     """Retorna True se a palavra-chave for encontrada no log do nó de determinado rank."""
     logs = get_node_logs(rank)
+    keyword_lower = keyword.lower()
     for line in logs:
-        if keyword in line:
+        if keyword_lower in line.lower():
             return True
     return False

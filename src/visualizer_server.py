@@ -67,6 +67,8 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
         event_files = []
         for pattern in patterns:
             event_files.extend(glob.glob(pattern))
+        # Deduplicate files by real path to prevent reading duplicate logs when volumes overlap
+        event_files = list(dict.fromkeys(os.path.realpath(f) for f in event_files))
 
         all_events = []
         for file_path in event_files:

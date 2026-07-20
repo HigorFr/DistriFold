@@ -67,6 +67,7 @@ def _log(level, *args, **kwargs):
 
     if PRINT_TO_CONSOLE:
         _original_print(*args, **kwargs)
+        sys.stdout.flush()
 
 
 # ==========================================

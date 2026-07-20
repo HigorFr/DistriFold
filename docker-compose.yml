@@ -36,6 +36,7 @@ services:
       - NUM_NODES=${NUM_NODES:-6}
     command: python -B tests/run_tests.py
     volumes:
+      - ./tests:/app/tests:z
       - ./test-output:/app/src/Locals:z
     profiles:
       - test

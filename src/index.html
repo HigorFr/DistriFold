@@ -621,6 +621,28 @@
                     </div>
                 </div>
 
+                <!-- Resultados Médios Globais -->
+                <div class="panel-section" style="background: rgba(16, 185, 129, 0.04); border-left: 3px solid var(--accent-green);">
+                    <div class="panel-title" style="color: var(--accent-green); margin-bottom: 0.75rem;">
+                        <span>Resultados Médios</span>
+                        <span id="final-badge" class="badge badge-completed" style="display: none;">Concluído 🏆</span>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-label">Acurácia Média</span>
+                            <span id="stat-avg-acc" class="stat-val green" style="font-size: 1rem;">-</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">F1-Score Médio</span>
+                            <span id="stat-avg-f1" class="stat-val cyan" style="font-size: 1rem;">-</span>
+                        </div>
+                        <div class="stat-card" style="grid-column: span 2;">
+                            <span class="stat-label">Loss Média</span>
+                            <span id="stat-avg-loss" class="stat-val gold" style="font-size: 1rem;">-</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Progresso Folds -->
                 <div class="panel-section">
                     <div class="panel-title">Treinamento Folds</div>
@@ -718,7 +740,7 @@
             currentTime: undefined, // Tempo atual da simulação
             lastEventTime: 0,
             leaderRank: null,
-            totalFolds: 8,
+            totalFolds: 0,
             completedFolds: {},
             nodeStatus: {}, // rank -> { role, state, progress, active_fold, metrics }
             totalNodes: 0,
@@ -1133,7 +1155,9 @@
                 timelineClass = "election";
             } 
             else if (type === "torrent_init") {
-                state.totalFolds = evt.total_chunks;
+                if (evt.total_chunks && evt.total_chunks > state.totalFolds) {
+                    state.totalFolds = evt.total_chunks;
+                }
                 state.foldsChanged = true;
                 node.progress = 1.0; // Líder já tem tudo
                 timelineDesc = `Líder ${rank} particionou dataset em ${evt.total_chunks} pedaços`;
@@ -1157,6 +1181,9 @@
                 
                 // Registra fold na tabela
                 if (fold_id >= 0) {
+                    if (fold_id >= state.totalFolds) {
+                        state.totalFolds = fold_id + 1;
+                    }
                     state.completedFolds[fold_id] = { state: "training", acc: "-", f1: "-", loss: "-" };
                     state.foldsChanged = true;
                 }
@@ -1169,6 +1196,9 @@
                 node.active_fold = null;
                 
                 if (fold_id >= 0 && metrics) {
+                    if (fold_id >= state.totalFolds) {
+                        state.totalFolds = fold_id + 1;
+                    }
                     state.completedFolds[fold_id] = {
                         state: "completed",
                         acc: metrics.accuracy.toFixed(4),
@@ -1195,6 +1225,18 @@
                 state.nodeStatus[subject].state = (type === "node_ready") ? "ready" : "active";
                 timelineDesc = `Líder registrou Nó ${subject} como ${(type === "node_ready") ? 'pronto' : 'ativo'}`;
                 timelineClass = "state";
+            }
+            else if (type === "training_finished") {
+                state.finalMetrics = {
+                    mean_acc: evt.mean_accuracy,
+                    std_acc: evt.std_accuracy,
+                    mean_f1: evt.mean_f1,
+                    std_f1: evt.std_f1,
+                    mean_loss: evt.mean_loss,
+                    std_loss: evt.std_loss
+                };
+                timelineDesc = `🏆 TREINAMENTO FINALIZADO! Acc Média: ${(evt.mean_accuracy * 100).toFixed(2)}% ± ${(evt.std_accuracy * 100).toFixed(2)}%`;
+                timelineClass = "train";
             }
 
             // Atualiza Visuais
@@ -1264,9 +1306,56 @@
                 ui.statTorrent.className = `stat-val ${avgProg === 100 ? 'green' : 'cyan'}`;
             }
 
+            // Garantir que totalFolds seja pelo menos o maior ID de fold registrado + 1
+            const registeredFoldIds = Object.keys(state.completedFolds).map(Number);
+            if (registeredFoldIds.length > 0) {
+                const maxFoldId = Math.max(...registeredFoldIds);
+                if (maxFoldId >= state.totalFolds) {
+                    state.totalFolds = maxFoldId + 1;
+                }
+            }
+
             // Folds completos
-            const completedCount = Object.values(state.completedFolds).filter(f => f.state === "completed").length;
+            const completedList = Object.values(state.completedFolds).filter(f => f.state === "completed" && f.acc !== "-");
+            const completedCount = completedList.length;
             ui.statFolds.innerText = `${completedCount} / ${state.totalFolds}`;
+
+            // Cálculo das Métricas Médias Globais
+            if (state.finalMetrics) {
+                const fm = state.finalMetrics;
+                document.getElementById('stat-avg-acc').innerText = `${(fm.mean_acc * 100).toFixed(2)}% ± ${(fm.std_acc * 100).toFixed(2)}%`;
+                document.getElementById('stat-avg-f1').innerText = `${fm.mean_f1.toFixed(4)} ± ${fm.std_f1.toFixed(4)}`;
+                document.getElementById('stat-avg-loss').innerText = `${fm.mean_loss.toFixed(4)} ± ${fm.std_loss.toFixed(4)}`;
+                document.getElementById('final-badge').style.display = "inline-block";
+            } else if (completedCount > 0) {
+                const accs = completedList.map(f => parseFloat(f.acc));
+                const f1s = completedList.map(f => parseFloat(f.f1));
+                const losses = completedList.map(f => parseFloat(f.loss));
+
+                const meanAcc = accs.reduce((a, b) => a + b, 0) / accs.length;
+                const stdAcc = Math.sqrt(accs.map(x => Math.pow(x - meanAcc, 2)).reduce((a, b) => a + b, 0) / accs.length);
+
+                const meanF1 = f1s.reduce((a, b) => a + b, 0) / f1s.length;
+                const stdF1 = Math.sqrt(f1s.map(x => Math.pow(x - meanF1, 2)).reduce((a, b) => a + b, 0) / f1s.length);
+
+                const meanLoss = losses.reduce((a, b) => a + b, 0) / losses.length;
+                const stdLoss = Math.sqrt(losses.map(x => Math.pow(x - meanLoss, 2)).reduce((a, b) => a + b, 0) / losses.length);
+
+                document.getElementById('stat-avg-acc').innerText = `${(meanAcc * 100).toFixed(2)}% ± ${(stdAcc * 100).toFixed(2)}%`;
+                document.getElementById('stat-avg-f1').innerText = `${meanF1.toFixed(4)} ± ${stdF1.toFixed(4)}`;
+                document.getElementById('stat-avg-loss').innerText = `${meanLoss.toFixed(4)} ± ${stdLoss.toFixed(4)}`;
+
+                if (state.totalFolds > 0 && completedCount === state.totalFolds) {
+                    document.getElementById('final-badge').style.display = "inline-block";
+                } else {
+                    document.getElementById('final-badge').style.display = "none";
+                }
+            } else {
+                document.getElementById('stat-avg-acc').innerText = "-";
+                document.getElementById('stat-avg-f1').innerText = "-";
+                document.getElementById('stat-avg-loss').innerText = "-";
+                document.getElementById('final-badge').style.display = "none";
+            }
 
             // Barra de Progresso
             const progPercent = state.totalFolds > 0 ? (completedCount / state.totalFolds) * 100 : 0;
@@ -1384,9 +1473,11 @@
             state.isPlaying = false;
             state.currentEventIndex = 0;
             state.currentTime = undefined;
+            state.lastEventTime = 0;
             state.nodes = [];
             state.links = [];
             state.completedFolds = {};
+            state.finalMetrics = null;
             state.nodeStatus = {};
             state.leaderRank = null;
             state.totalNodes = 0;
